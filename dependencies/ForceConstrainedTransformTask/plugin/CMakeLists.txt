@@ -1,0 +1,2 @@
+add_plugin(LoadForceConstrainedTransformTask plugin.cpp)
+target_link_libraries(LoadForceConstrainedTransformTask PUBLIC ForceConstrainedTransformTask)

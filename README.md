@@ -52,8 +52,9 @@ docs/RHPS1迁移修改记录_20260729.md
 Control PC 需要构建：
 
 1. `ros2_ws/src/vr_interface_msgs`；
-2. `dependencies/mc_neuron_mocap_plugin`；
-3. `controller`。
+2. `dependencies/ForceConstrainedTransformTask`；
+3. `dependencies/mc_neuron_mocap_plugin`；
+4. `controller`。
 
 第二项只是旧 retargetting state 的编译和 datastore 兼容层，不是实际的姿态输入源，
 并且不会自动加载。实际输入仍来自 Operator PC 上的 Vive talker。
@@ -69,6 +70,7 @@ extension 会按以下顺序注册三个项目：
 
 ```text
 vr_interface_msgs
+ForceConstrainedTransformTask
 mc_neuron_mocap_plugin
 ANAAvatarControllerRHPS1_manual_project
 ```

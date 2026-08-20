@@ -19,7 +19,7 @@ find_package(mc_rtc REQUIRED)
 # 自己的前缀，避免覆盖当前稳定控制器和状态库。
 set(MC_CONTROLLER_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}/lib/mc_controller")
 set(MC_CONTROLLER_LIBRARY_INSTALL_PREFIX "${CMAKE_INSTALL_PREFIX}/lib/mc_controller")
-find_package(ForceConstrainedTransformTask)
+find_package(ForceConstrainedTransformTask REQUIRED)
 find_package(mc_neuron_mocap_plugin REQUIRED)
 find_package(lipm_walking_controller REQUIRED)
 if(NOT TARGET mc_rtc::mc_rtc_ros)
