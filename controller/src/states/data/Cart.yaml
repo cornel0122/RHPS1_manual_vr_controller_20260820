@@ -1,0 +1,66 @@
+---
+ANA::GraspCart:
+  base: MetaTasks
+  tasks:
+    LeftHandTrajectory:
+      type: bspline_trajectory
+      surface: LeftHand
+      stiffness: 1000.0
+      duration: 5.0
+      weight: 300
+      dimWeight: [0.5, 0.5, 0.5, 1.0, 1.0, 1.0]
+      displaySamples: 100
+      targetSurface:
+        robot: cart
+        surface: HandleLeft
+        rotation: [-0.3,-1.57,-1.57]
+        # control points in target surface frame
+        controlPoints:
+          - [-0.2, 0.15, -0.1]
+        # oriWaypoints:
+        # [
+        #   [13.0, [0.0, -1.57, 0.0]]
+        # ]
+    RightHandTrajectory:
+      type: bspline_trajectory
+      surface: RightHand
+      stiffness: 1000.0
+      duration: 5.0
+      weight: 300
+      dimWeight: [0.5, 0.5, 0.5, 1.0, 1.0, 1.0]
+      displaySamples: 100
+      targetSurface:
+        robot: cart
+        surface: HandleRight
+        rotation: [0.3,-1.57,1.57]
+        controlPoints:
+          - [-0.2, -0.15, -0.1]
+ANA::MoveCart:
+  base: MetaTasks
+  AddContacts:
+    - r2: cart
+      r1Surface: LeftHand
+      r2Surface: HandleLeft
+    - r2: cart
+      r1Surface: RightHand
+      r2Surface: HandleRight
+    - r1: cart
+      r2: ground
+      r1Surface: HandleCenter
+      r2Surface: AllGround
+      dof: [1,1,0,0,0,1]
+  tasks:
+    MoveCart:
+      type: surfaceTransform
+      robot: cart
+      surface: HandleCenter
+      weight: 500
+      stiffness: 10
+
+ANA::GraspCartStabilized:
+  base: Parallel
+  states: ['ANA::Standing', GraspCart]
+
+ANA::MoveCartStabilized:
+  base: Parallel
+  states: ['ANA::Standing', MoveCart]

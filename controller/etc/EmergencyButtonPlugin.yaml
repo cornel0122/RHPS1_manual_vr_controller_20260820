@@ -1,0 +1,5 @@
+required: false # SHOULD BE false for XPRIZE (we don't want the button disconnecting from stopping the demo)
+gui: true
+type: "wireless" # SHOULD BE wireless for XPRIZE
+port: "/dev/wireless_emergency_button"
+timeout: 3000 # Disconnected after 3s without receiving

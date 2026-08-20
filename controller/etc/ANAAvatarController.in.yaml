@@ -1,0 +1,1340 @@
+---
+# If true, the FSM transitions are managed by an external tool
+Managed: false
+# If true and the FSM is self-managed, transitions should be triggered
+StepByStep: false
+# Change idle behaviour, if true the state is kept until transition,
+# otherwise the FSM holds the last state until transition
+IdleKeepState: true
+# Where to look for state libraries
+StatesLibraries:
+- "@MC_STATES_DEFAULT_INSTALL_PREFIX@"
+- "@MC_STATES_INSTALL_PREFIX@"
+- "@LIPM_WALKING_STATES_LIBRARIES@"
+
+# Where to look for state files
+StatesFiles:
+- "@MC_STATES_DEFAULT_INSTALL_PREFIX@/data"
+- "@MC_STATES_INSTALL_PREFIX@/data"
+- "@LIPM_WALKING_STATES_FILES@"
+
+# If true, state factory will be more verbose
+VerboseStateFactory: false
+# Additional robots to load
+joint_safety:
+  hrp4cr:
+    joints: ["L_WRIST_P", "L_WRIST_Y", "L_WRIST_R","R_WRIST_P", "R_WRIST_Y", "R_WRIST_R"]
+  error_threshold: 0.05
+
+robots:
+  hrp4cr:
+    frames:
+      - name: ZMiniCenter
+        parent: NECK_P_LINK
+        X_p_f:
+          translation: [0.11, 0, 0.078]
+          rotation: [0, 0.436, 0]
+
+  ground:
+    module: env/ground
+# General constraints, always on
+constraints:
+- type: contact
+- type: kinematics
+#- type: dynamics
+  damper: [0.1, 0.01, 0.5]
+# - type: compoundJoint
+
+# Collision constraint
+# collisions:
+# - type: collision
+#   useCommon: true
+
+collisions:
+  hrp4cr:
+    iDist: 0.01
+    sDist: 0.005
+    simplified_all_bodies: [BODY, NECK_P_LINK, CHEST_Y_LINK,
+                           L_SHOULDER_P_LINK, L_SHOULDER_R_LINK, L_SHOULDER_Y_LINK,
+                           L_ELBOW_P_LINK, L_WRIST_Y_LINK, L_WRIST_R_LINK, L_WRIST_P_LINK,
+                           R_SHOULDER_P_LINK, R_SHOULDER_R_LINK, R_SHOULDER_Y_LINK, R_ELBOW_P_LINK,
+                           R_WRIST_Y_LINK, R_WRIST_R_LINK, R_WRIST_P_LINK,
+                           L_HIP_P_LINK ,
+                           R_HIP_P_LINK ,
+                           R_KNEE_P_LINK, L_KNEE_P_LINK]
+    cstr_set_0:
+      b1: [L_SHOULDER_Y_LINK, L_ELBOW_P_LINK, L_HAND_PALM]
+      b2: [R_HIP_P_LINK , L_HIP_Y_LINK , BODY, NECK_P_LINK, CHEST_Y_LINK]
+      joints: [L_SHOULDER_P, L_SHOULDER_R, L_SHOULDER_Y, L_ELBOW_P, L_WRIST_Y, L_WRIST_R, L_WRIST_P]
+    cstr_set_1:
+      b1: [R_SHOULDER_Y_LINK, R_ELBOW_P_LINK, R_HAND_PALM]
+      b2: [R_HIP_P_LINK , L_HIP_Y_LINK , BODY, NECK_P_LINK, CHEST_Y_LINK]
+      joints: [R_SHOULDER_P, R_SHOULDER_R, R_SHOULDER_Y, R_ELBOW_P, R_WRIST_Y, R_WRIST_R, R_WRIST_P]
+    cstr_set_2:
+      b1: [R_ELBOW_P_LINK, R_HAND_PALM]
+      b2: [L_ELBOW_P_LINK, L_HAND_PALM]
+      joints: [R_SHOULDER_P, R_SHOULDER_R, R_SHOULDER_Y, R_ELBOW_P, R_WRIST_Y, R_WRIST_R, R_WRIST_P]
+    # cstr_set_3:
+    #   b1: [ L_ANKLE_R_LINK, L_TOE_P_LINK]
+    #   b2: [ R_ANKLE_R_LINK, R_TOE_P_LINK]
+    #   joints: []
+    cstr_set_3:
+      b1: [ L_HIP_P_LINK]
+      b2: [ R_HIP_P_LINK]
+      joints: []
+
+ismpc:
+  Tc: 1.5
+  Tp: 10
+  delta: 0.05
+  beta_zmp_vel: 0.001
+  beta_dcm: 0
+  beta_dcm_static: 0
+  beta_step: 1e3
+  beta_stab: 1e5
+  beta_traj: 1e1
+  allow_none_tail: true
+  foosteps_kin_cstr: [0.6,0.25]
+  footsteps_cstr_square: [0.6,0.25]
+  ts_range: [0.7,2]
+  tds_range: [0.2,1.5]
+  tss_range: [0.5,1.5]
+  double_support_ratio: 0.4
+  ts: 1.3
+  sliding_zmp_cstr_region: false
+  use_stability_task: false
+  safety_thresholds:
+    beta_range: [1e-9,1e9]
+    zmp_cstr_square_min: 0.01
+    zmp_cstr_square_max: 1
+  # hrp4
+  zmp_cstr_square: [0.14,0.08]
+  zmp_cstr_square_sg_supp: [0.14,0.05]
+  zmp_cstr_square_static: [0.14,0.08]
+  zmp_ref_offset: [0.0,0.05]
+  offset: [-0.00,0.0]
+  offset_sg: [0.,0.0]
+  next_stp_cstr_ratio: 1
+  next_stp_cstr_ratio: 0.1
+
+footsteps_planner: &footsteps_planner
+  Tp: 10
+  delta: 0.1
+  Ts_limit: [0.4,5]
+  kinematics_cstr: [0.6,0.08]
+  mean_speed: 0.1
+  robot_height: 150
+  max_rotation: 0.1
+
+HybridPlanner: *footsteps_planner
+
+mocap_plugin:
+  ip: "192.168.2.13"
+  activate_on_start: false
+  port: 7001
+  frequency: 60
+  sequence_size: 60
+
+tasks:
+  posture:
+    stiffness: 1.0
+    weight: 10.0
+  swingfoot_stiffness: 50
+  swingfoot_weight: 5000
+  swingfoot_dimweight: [1.,1.,1.,1.,1.,1.]
+  swingfoot_dimstiffness: [1.,1.,1.,1.,1.,1.]
+  momentum_task_weight: 100000
+
+walking_controller:
+  auto_start:
+    activate: false
+    steps: 10
+    speed: [0,0.0,0]
+    t_steps: 1.1
+  min_sg_suport_duration: 0.75
+  min_dbl_suport_duration: 0.25
+  foot_landing_offset: -3e-3
+  max_step_duration: 2
+  impact_threshold: 40
+  footstep_height: 0.03
+  wrench_filter_cutoff_T: 2
+  gamma_filter_cutoff_T: 2
+  safety_foot_roll_error: 0.1
+  max_swing_foot_velocity: 1.6
+  stability_error_threshold: 0.2
+  robot:
+    hrp4:
+      torsoBodyName: "torso"
+      leftFootLink: "l_ankle"
+      rightFootLink: "r_ankle"
+      left_hand_surface: "LeftHand"
+      right_hand_surface: "RightHand"
+      right_foot_surface: "RightFootCenter"
+      left_foot_surface: "LeftFootCenter"
+    hrp4cr:
+      torsoBodyName: "CHEST_P_LINK"
+      leftFootLink: "L_TOE_P_LINK"
+      rightFootLink: "R_TOE_P_LINK"
+      left_hand_surface: "LeftHand"
+      right_hand_surface: "RightHand"
+      right_foot_surface: "RightFootCenter"
+      left_foot_surface: "LeftFootCenter"
+
+
+stabilizer:
+  robot: &stabilizer-robot
+    hrp4cr:
+      sole:
+        half_length: 0.08
+        half_width: 0.038
+        friction: 0.7
+        leftAnkleOffset: [0.0, -0.02] # target center of foot
+      torso:
+        pitch: 0.0
+      stabilizer:
+        dcm_tracking:
+          integrator_time_constant: 0.04
+          gains:
+            prop: [6,6]
+            integral: [4,6]
+            deriv: [0.3, 0.3]
+            comdError: 0.
+        admittance:
+          df: [0, 0, 0.0002]
+          cop: [0.03, 0.03]
+          maxVel:
+            angular: [3., 3., 3.]
+            linear: [1., 1., 1.]
+        tasks:
+          contact:
+            damping: 300.
+          torso:
+            stiffness: 2
+            weight: 100
+          pelvis:
+            stiffness: 2
+            weight: 500
+          com:
+            stiffness: [1000.,1000.,100.]
+            dimWeight: [1 , 1 , 1]
+            weight: 1000.
+            height: 0.82
+        dcm_bias:
+          dcmMeasureErrorStd: 0.001
+          biasDriftPerSecondStd: 0.0001
+          zmpMeasureErrorStd: 0.0005
+          comBiasLimit: [0.1,0.1]
+          biasLimit: [0.05, 0.02]
+          withDCMBias: true
+          correctCoMPos: true
+        external_wrench:
+          ## general ##
+          add_expected_com_offset: false
+          subtract_measured_value: true
+          exclude_from_dcm_bias_est: true
+          ## com offset ##
+          modify_com_error: true
+          modify_zmp_error: true
+          modify_zmp_error_d: false
+          com_offset_err_com_limit: 0.05
+          com_offset_err_zmp_limit: 0.05
+          ## filter ##
+          ext_wrench_sum_cutoff: 0.05
+          com_offset_cutoff: 0.05
+          com_offset_com_cutoff: 10.0
+          derivator_time_constant: 1.0
+          ## gain (not loaded automatically) ##
+          ext_wrench_gain: [1, 1, 1]
+      stabilizer_sgsupp:
+        dcm_tracking:
+          gains:
+            prop: [3,3]
+            integral: [9,9]
+            deriv: [0.3,0.3]
+            comdError: 0.
+        admittance:
+          dfz: 0.0002
+          cop: [0.03, 0.03]
+        tasks:
+          torso:
+            weight: 500
+          pelvis:
+            weight: 500
+        admittance:
+          dfz: 0.0001
+          cop: [0.03, 0.03]
+      stabilizer_dblsupp:
+        dcm_tracking:
+          gains:
+            prop: [5,5]
+            integral: [5,5]
+            deriv: [0.3,0.3]
+            comdError: 0.
+        tasks:
+          torso:
+            weight: 500
+          pelvis:
+            weight: 500
+        admittance:
+          dfz: 0.0002
+          cop: [0.03, 0.03]
+    hrp4:
+       stabilizer:
+        dcm_tracking:
+          gains:
+            prop: [3,3]
+            integral: [10,10]
+            deriv: [0.,0.]
+            comdError: 1.
+        admittance:
+          cop: [0.01, 0.017]
+          maxVel:
+            angular: [.5, .5, .5]
+            linear: [1., 1., 1.]
+        tasks:
+          torso:
+            pitch: 0.12
+            stiffness: 2
+            weight: 500
+          com:
+            stiffness: [1000.,1000.,100.]
+            weight: 1000.
+            dimWeight: [1 , 1 , 1]
+            height: 0.78
+    #     dcm_bias:
+    #       dcmMeasureErrorStd: 0.001
+    #       biasDriftPerSecondStd: 0.0001
+    #       zmpMeasureErrorStd: 0.0005
+    #       biasLimit: [0.05, 0.02]
+    #       withDCMBias: true
+
+robot_models: *stabilizer-robot
+
+#Use ROS topics to get the data, otherwise it will use the mc_rtc gui poses
+UseROS: false
+
+# Implement some additional text states
+states:
+  Avatar::Initial:
+    base: Posture
+    completion:
+      eval: 0.1
+    #postureTask:
+    #  stiffness: 5
+    #  target:
+    #    L_CROTCH_Y: [0.101942]
+    #    L_CROTCH_R: [-0.223882]
+    #    L_CROTCH_P: [-0.743841]
+    #    L_KNEE_P: [0.555673]
+    #    L_ANKLE_R: [0.043245]
+    #    L_ANKLE_P: [-0.133849]
+    #    CHEST_Y: [0.376055]
+    #    CHEST_P: [0.219546]
+    #    R_CROTCH_Y: [0.096446]
+    #    R_CROTCH_R: [-0.263390]
+    #    R_CROTCH_P: [-0.854689]
+    #    R_KNEE_P: [0.693636]
+    #    R_ANKLE_R: [0.083134]
+    #    R_ANKLE_P: [-0.162384]
+    #    HEAD_Y: [-0.001237]
+    #    HEAD_P: [0.029062]
+    #    L_SHOULDER_P: [0.363215]
+    #    L_SHOULDER_R: [0.367271]
+    #    L_SHOULDER_Y: [0.089446]
+    #    L_ELBOW_P: [-2.121135]
+    #    L_ELBOW_Y: [0.344598]
+    #    L_WRIST_R: [-0.000747]
+    #    L_WRIST_Y: [-0.004011]
+    #    L_HAND: [-0.000052]
+    #    R_SHOULDER_P: [0.097586]
+    #    R_SHOULDER_R: [-0.417861]
+    #    R_SHOULDER_Y: [0.243157]
+    #    R_ELBOW_P: [-1.450008]
+    #    R_ELBOW_Y: [0.248820]
+    #    R_WRIST_R: [-0.624567]
+    #    R_WRIST_Y: [-0.533736]
+    AddContactsAfter:
+      - r2: ground
+        r1Surface: LeftFoot
+        r2Surface: AllGround
+      - r2: ground
+        r1Surface: RightFoot
+        r2Surface: AllGround
+          #- r2: ground
+          #  r1Surface: RightHandSupportPlate
+          #  r2Surface: AllGround
+
+  ANA::ROSInputState:
+    base: ROSInputState
+    ROS_frequency: 100
+    EmergencyButtonTopic: "avatar/emergency_button"
+    MaxPoseTime: 0.5
+
+  ANA::HandRetargeting:
+    base: RelativeRetargetting
+    datastoreRetargetingReferenceOperator: OperatorRetargetingReference
+    datastoreRetargetingReferenceRobot: RobotRetargetingReference
+    vive_trackers: true
+    always_active: true
+    scaling: 1.3 # scaling between human and robot (XXX must be adjusted manually for each operator)
+    minStiffness: 5
+    maxStiffness: 50
+    weight: 500
+    linearStiffTimeThreshold: 2
+    maxStiffTimeThreshold: 4
+    dimWeight: [1, 1, 1, 1, 1, 1]
+    dimStiffness: [1, 1, 1, 1, 1, 1]
+    updatePosture: true
+    motionPrediction_input_sequence_length: 15
+    motionPrediction_output_sequence_length: 15
+    motionPrediction_model_frequency: 60
+    admittance: [6, 6, 6, 0.2, 0.2, 0.2]
+    safety_damping: [10, 10, 10, 10, 10, 10]
+    force_limit:
+      couple: [5,5,5]
+      force: [20,50,50]
+    force_margin:
+      couple: [0.1,0.1,0.1]
+      force: [2,2,2]
+    admittance_zmp: [6, 6, 6, 0.2, 0.2, 0.2]
+    safety_damping_zmp: [10, 10, 10, 10, 10, 10]
+    force_limit_zmp:
+      couple: [2000,2000,2000]
+      force: [2000,2000,2000]
+    force_margin_zmp:
+      couple: [0.1,0.1,0.1]
+      force: [5,5,5]
+
+    softJumpSafetyDistance: 0.1
+    criticalJumpSafetyDistance: 0.2
+    maxHandDistanceFromReferenceSafety: 2
+    maxElbowDistanceFromChestSafety: 0.8
+
+  ANA::LeftHandRetargeting:
+    base: ANA::HandRetargeting
+    hand_ros_topic: "avatar/left_hand/pose"
+    hand_vel_ros_topic: "avatar/left_hand/velocity"
+    trigger_ros_topic: "avatar/trigger/left_hand"
+    state_ros_topic: "avatar/state/left_hand"
+    mocap_end_eff_num: 13 #13 is forearm and 14 is hand
+    datastoreJoy: "LeftHandJoy"
+    motionPrediction_sequence_Target: "LeftHand"
+
+  ANA::RightHandRetargeting:
+    base: ANA::HandRetargeting
+    hand_ros_topic: "avatar/right_hand/pose"
+    hand_vel_ros_topic: "avatar/right_hand/velocity"
+    trigger_ros_topic: "avatar/trigger/right_hand"
+    state_ros_topic: "avatar/state/right_hand"
+    mocap_end_eff_num: 9 #9 is forearm and 10 is hand
+    datastoreJoy: "RightHandJoy"
+    motionPrediction_sequence_Target: "RightHand"
+
+  # Guillaume、Cornel 与纯遥操作共用的意图识别入口。实际模式由启动器通过
+  # ANA_RHPS1_INTENT_MODE 选择，YAML 默认关闭以保证直接启动控制器时安全。
+  ANA::IntentRecognitionBridge:
+    base: IntentRecognitionBridge
+    enabled: false
+    backend: "guillaume"
+    topic: "/goal_beliefs"
+    left_topic: "/left_goal_beliefs"
+    write_assistance_datastore: false
+    default_hand: "r"
+    confidence_threshold: 0.2
+    alpha_cap: 0.75
+    accepted_frames: ["robot_world", "world", "BODY"]
+    allow_missing_frame: false
+    position_scale: 1.0
+    source_to_robot_rotation: [1.0, 0.0, 0.0,
+                               0.0, 1.0, 0.0,
+                               0.0, 0.0, 1.0]
+    source_to_robot_translation: [0.0, 0.0, 0.0]
+    left_hand_task: "ANA::LeftHandRetargetingTask"
+    right_hand_task: "ANA::RightHandRetargetingTask"
+    left_robot_hand_frame: "LeftHandSupportPlate"
+    right_robot_hand_frame: "RightHandSupportPlate"
+    # Cornel landmark 使用共享自主介入前的 Vive 人工目标，避免机器人运动形成正反馈。
+    hand_input_source: "manual_task_target"
+    publish_robot_inputs: true
+    robot_camera_frame: "ZMiniCenter"
+    robot:
+      rhps1:
+        left_robot_hand_frame: "LeftHandSupportPlate"
+        right_robot_hand_frame: "RightHandSupportPlate"
+        robot_camera_frame: "ZMiniCenter"
+    camera_optical_frame_id: "head_camera_optical_frame"
+    camera_pose_topic: "/rtgr/robot/camera_pose"
+    left_hand_camera_topic: "/rtgr/robot/left_hand_point_camera"
+    right_hand_camera_topic: "/rtgr/robot/right_hand_point_camera"
+    use_robot_camera_transform: true
+    primary_only_assistance: true
+    primary_assistance_actions: ["approach_or_grab", "grab"]
+    map_primary_to_guillaume_grab: true
+    assistance_object_allowlist: ["pitcher", "bottle", "salt", "sauce", "potato1"]
+    assistance_object_aliases:
+      potato: "potato1"
+      # MuJoCo 当前使用 salt；保留 pepper 别名，避免后续场景改名后中断辅助。
+      pepper: "salt"
+
+  # Guillaume 共享自主的显示与双手辅助状态。意图 belief 由同名全局插件提供。
+  ANA::UI_SharedAutonomy:
+    base: UI_SharedAutonomy
+    hud_enabled: true
+    hud_topic: "/ana/shared_autonomy/hud"
+
+  ANA::SharedAutonomyLeftHand:
+    base: SharedAutonomy
+    enabled: true
+    overwritten_Task: "ANA::LeftHandRetargeting"
+    translationStiffness: 0.25
+    orientationStiffness: 3
+    type: "l"
+    look_at_vector: [0.0, -0.4, -0.6]
+    # RHPS1 两指夹具沿手部局部 -Z 方向伸出；共享自主时让夹具开口朝机器人前方。
+    look_down_vector: [0.0, 0.0, -1.0]
+    look_down_target_vector: [1.0, 0.0, 0.0]
+    robot:
+      rhps1:
+        target_frame: "LeftHandSupportPlate"
+        body_frame_relative_pose:
+          translation: [0, 0, 0]
+          rotation: [0, 0, 0]
+        activeJoints: [
+          L_SHOULDER_P, L_SHOULDER_R, L_SHOULDER_Y,
+          L_ELBOW_P, L_ELBOW_Y,
+          L_WRIST_R, L_WRIST_Y]
+
+  ANA::SharedAutonomyRightHand:
+    base: ANA::SharedAutonomyLeftHand
+    overwritten_Task: "ANA::RightHandRetargeting"
+    type: "r"
+    look_at_vector: [0.0, 0.4, -0.6]
+    look_down_vector: [0.0, 0.0, -1.0]
+    look_down_target_vector: [1.0, 0.0, 0.0]
+    robot:
+      rhps1:
+        target_frame: "RightHandSupportPlate"
+        body_frame_relative_pose:
+          translation: [0, 0, 0]
+          rotation: [0, 0, 0]
+        activeJoints: [
+          R_SHOULDER_P, R_SHOULDER_R, R_SHOULDER_Y,
+          R_ELBOW_P, R_ELBOW_Y,
+          R_WRIST_R, R_WRIST_Y]
+
+  ANA::CoMRetargeting:
+    base: CoMRetargetting
+    trigger_ros_topic: "avatar/trigger/com_down"
+    state_ros_topic: "avatar/state/com_down"
+    datastorePoseWorld: ChestPose
+    datastoreJoy: LeftHandJoy
+    originOffset:
+      orientation: [0.,0.,0.]
+      translation: [0.,0.,0.]
+    scaling: 0.75
+    minCoMHeight: 0.70
+    maxTorsoPitch: 35
+    minTorsoPitch: -1
+    minPressTime: 0.5
+    moveCoMDuration: 4
+
+  ANA::RightForearmRetargeting:
+    base: OrientationRetargetting
+    datastoreRetargetingReferenceOperator: OperatorRetargetingReference
+    datastoreRetargetingReferenceRobot: RobotRetargetingReference
+    vive_trackers: true
+    always_active: true
+    body_ros_topic: "avatar/right_forearm/pose"
+    body_vel_ros_topic: "avatar/right_forearm/velocity"
+    trigger_ros_topic: "avatar/trigger/right_forearm"
+    state_ros_topic: "avatar/state/right_forearm"
+    mocap_ori_body_num: 12
+    minStiffness: 5
+    maxStiffness: 50
+    weight: 50
+    linearStiffTimeThreshold: 2
+    maxStiffTimeThreshold: 4
+    dimWeight: [1, 1, 1, 0, 0, 0]
+    dimStiffness: [1, 1, 1, 1, 1, 1]
+    updatePosture: true
+    robot:
+      hrp4cr:
+        target_frame: "R_ELBOW_P_LINK"
+        originOffset:
+          translation: [0.,0.,0.]
+          rotation: [3.14,-1.0472,1.57]
+        targetOffset:
+          translation: [0,0,0]
+          rotation: [3.14,1.0472,0.0]
+        activeJoints: [
+          R_SHOULDER_P, R_SHOULDER_R, R_SHOULDER_Y,
+          R_ELBOW_P,
+          R_WRIST_Y, R_WRIST_R, R_WRIST_P] #,CHEST_Y]
+      hrp4:
+        target_frame: "R_ELBOW_P_LINK"
+        originOffset:
+          translation: [0.,0.,0.]
+          rotation: [3.14,-1.0472,1.57]
+        targetOffset:
+          translation: [0,0,0]
+          rotation: [3.14,1.0472,0.0]
+        activeJoints: [
+          R_SHOULDER_P, R_SHOULDER_R, R_SHOULDER_Y,
+          R_ELBOW_P,
+          R_WRIST_Y, R_WRIST_R, R_WRIST_P] # ,CHEST_Y]
+          # We should try enabling CHEST joints too
+          # CHEST_P, CHEST_R, CHEST_Y
+
+  ANA::LeftForearmRetargeting:
+    base: ANA::RightForearmRetargeting
+    body_ros_topic: "avatar/left_forearm/pose"
+    body_vel_ros_topic: "avatar/left_forearm/velocity"
+    trigger_ros_topic: "avatar/trigger/left_forearm"
+    state_ros_topic: "avatar/state/left_forearm"
+    mocap_ori_body_num: 12
+    robot:
+      hrp4cr:
+        target_frame: "L_ELBOW_P_LINK"
+        originOffset:
+          translation: [0.,0.,0.]
+          rotation: [3.14,-1.0472,1.57]
+        targetOffset:
+          translation: [0,0,0]
+          rotation: [3.14,-1.0472,3.14]
+        activeJoints: [
+          L_SHOULDER_P, L_SHOULDER_R, L_SHOULDER_Y,
+          L_ELBOW_P,
+          L_WRIST_Y, L_WRIST_R, L_WRIST_P] # ,CHEST_Y]
+          # We should try enabling CHEST joints too
+          # CHEST_P, CHEST_R, CHEST_Y
+      hrp4:
+        target_frame: "L_ELBOW_P_LINK"
+        originOffset:
+          translation: [0.,0.,0.]
+          rotation: [3.14,-1.0472,1.57]
+        targetOffset:
+          translation: [0,0,0]
+          rotation: [3.14,-1.0472,3.14]
+        activeJoints: [
+          L_SHOULDER_P, L_SHOULDER_R, L_SHOULDER_Y,
+          L_ELBOW_P,
+          L_WRIST_Y, L_WRIST_R, L_WRIST_P] # ,CHEST_Y]
+
+  ANA::LeftArmRetargeting:
+    base: ANA::RightForearmRetargeting
+    body_ros_topic: "avatar/left_arm/pose"
+    body_vel_ros_topic: "avatar/left_arm/velocity"
+    trigger_ros_topic: "avatar/trigger/left_arm"
+    state_ros_topic: "avatar/state/left_arm"
+    mocap_ori_body_num: 12
+    weight: 10
+    robot:
+      hrp4cr:
+        target_frame: "L_SHOULDER_Y_LINK"
+        originOffset:
+          translation: [0.,0.,0.]
+          rotation: [3.14,-1.0472,1.57]
+        targetOffset:
+          translation: [0,0,0]
+          rotation: [3.14,-1.0472,3.14]
+        activeJoints: [
+          L_SHOULDER_P, L_SHOULDER_R, L_SHOULDER_Y,
+          L_ELBOW_P,
+          L_WRIST_Y, L_WRIST_R, L_WRIST_P]
+          # We should try enabling CHEST joints too
+          # CHEST_P, CHEST_R, CHEST_Y
+      hrp4:
+        target_frame: "L_SHOULDER_Y_LINK"
+        originOffset:
+          translation: [0.,0.,0.]
+          rotation: [3.14,-1.0472,1.57]
+        targetOffset:
+          translation: [0,0,0]
+          rotation: [3.14,-1.0472,3.14]
+        activeJoints: [
+          L_SHOULDER_P, L_SHOULDER_R, L_SHOULDER_Y,
+          L_ELBOW_P,
+          L_WRIST_Y, L_WRIST_R, L_WRIST_P] # ,CHEST_Y]
+
+  ANA::RightArmRetargeting:
+    base: ANA::RightForearmRetargeting
+    body_ros_topic: "avatar/right_arm/pose"
+    body_vel_ros_topic: "avatar/right_arm/velocity"
+    trigger_ros_topic: "avatar/trigger/right_arm"
+    state_ros_topic: "avatar/state/right_arm"
+    mocap_ori_body_num: 12
+    weight: 10
+    robot:
+      hrp4cr:
+        target_frame: "R_SHOULDER_Y_LINK"
+        originOffset:
+          translation: [0.,0.,0.]
+          rotation: [3.14,-1.0472,1.57]
+        targetOffset:
+          translation: [0,0,0]
+          rotation: [3.14,1.0472,0.0]
+        activeJoints: [
+          R_SHOULDER_P, R_SHOULDER_R, R_SHOULDER_Y,
+          R_ELBOW_P,
+          R_WRIST_Y, R_WRIST_R, R_WRIST_P]
+      hrp4:
+        target_frame: "R_SHOULDER_Y_LINK"
+        originOffset:
+          translation: [0.,0.,0.]
+          rotation: [3.14,-1.0472,1.57]
+        targetOffset:
+          translation: [0,0,0]
+          rotation: [3.14,1.0472,0.0]
+        activeJoints: [
+          R_SHOULDER_P, R_SHOULDER_R, R_SHOULDER_Y,
+          R_ELBOW_P,
+          R_WRIST_Y, R_WRIST_R, R_WRIST_P] # ,CHEST_Y]
+
+  ANA::HeadRetargeting:
+    base: ANA::RightForearmRetargeting
+    body_ros_topic: "avatar/head/pose"
+    body_vel_ros_topic: "avatar/head/velocity"
+    trigger_ros_topic: "avatar/trigger/head_"
+    state_ros_topic: "avatar/state/head_"
+    mocap_ori_body_num: 15
+    # minStiffness: 50
+    maxStiffness: 50
+    ignore_emergency: true
+    always_actve: true
+    robot:
+      hrp4cr:
+        target_frame: "NECK_P_LINK"
+        body_frame_relative_pose:
+          translation: [0.1,0,0.1]
+          rotation: [0,0.30,0]
+        originOffset:
+          translation: [0.,0.,0.]
+          rotation: [3.14,-1.0472,1.57]
+        targetOffset:
+          translation: [0,0,0]
+          rotation: [0.,0.,1.57]
+        activeJoints: [NECK_P, NECK_Y, NECK_R] # ,CHEST_Y]
+          # We should try enabling CHEST joints too
+          # CHEST_P, CHEST_R, CHEST_Y
+      hrp4:
+        target_frame: "NECK_P_LINK"
+        originOffset:
+          translation: [0.,0.,0.]
+          rotation: [3.14,-1.0472,1.57]
+        targetOffset:
+          translation: [0,0,0]
+          rotation: [0.,0.,1.57]
+        activeJoints: [NECK_P, NECK_Y] # ,CHEST_Y]
+          # We should try enabling CHEST joints too
+          # CHEST_P, CHEST_R, CHEST_Y
+
+  ANA::LeftRetargeting:
+    base: RetargetingControl
+    retargeting_states: [ANA::LeftForearmRetargeting,ANA::LeftArmRetargeting,ANA::LeftHandRetargeting]
+    trigger_ros_topic: "avatar/trigger/left"
+    state_ros_topic: "avatar/state/left"
+
+  ANA::RightRetargeting:
+    base: RetargetingControl
+    retargeting_states: [ANA::RightForearmRetargeting,ANA::RightArmRetargeting,ANA::RightHandRetargeting]
+    trigger_ros_topic: "avatar/trigger/right"
+    state_ros_topic: "avatar/state/right"
+
+  ANA::Head:
+    base: RetargetingControl
+    retargeting_states: [ANA::HeadRetargeting]
+    trigger_ros_topic: "avatar/trigger/head"
+    state_ros_topic: "avatar/state/head"
+
+  ANA::LeftGripper:
+    base: GripperHandling
+    datastoreJoy: LeftHandJoy
+    datastoreGripper: LeftGripper
+    force_feedback_topic: avatar/left_gripper/force_feedback
+    vibration_feedback_topic: avatar/left_gripper/vibration_feedback
+    gripper_opening_topic: avatar/left_gripper/opening
+    force_feedback_offset: 0.8
+    robot:
+      hrp4j:
+        gripper: "l_gripper"
+        thumbJoint: "L_HAND_J0"
+        fingersJoint: "L_HAND_J1"
+      hrp4cr:
+        gripper: "l_gripper"
+        thumbJoint: "L_HAND_THUMB_J0"
+        fingersJoint: "L_HAND_THUMB_J0"
+      hrp4:
+        gripper: "l_gripper"
+        thumbJoint: "L_HAND_J0"
+        fingersJoint: "L_HAND_J0"
+    thumbPercentOpen: 0.7
+    thumbPercentClosed: 0.05
+    fingersPercentOpen: 0.7
+    fingersPercentClosed: 0.05
+    safety:
+      threshold: 8
+      iter: 8
+      release: 0
+      vmaxPercent: 0.25
+
+  ANA::RightGripper:
+    base: ANA::LeftGripper
+    force_feedback_topic: avatar/right_gripper/force_feedback
+    vibration_feedback_topic: avatar/right_gripper/vibration_feedback
+    gripper_opening_topic: avatar/right_gripper/opening
+    datastoreJoy: RightHandJoy
+    datastoreGripper: RightGripper
+    robot:
+      hrp4j:
+        gripper: "r_gripper"
+        thumbJoint: "R_HAND_J0"
+        fingersJoint: "R_HAND_J1"
+      hrp4cr:
+        gripper: "r_gripper"
+        thumbJoint: "R_HAND_THUMB_J0"
+        fingersJoint: "R_HAND_THUMB_J0"
+      hrp4:
+        gripper: "r_gripper"
+        thumbJoint: "R_HAND_J0"
+        fingersJoint: "R_HAND_J0"
+
+  ANA::PutLeftHandAboveTable:
+    base: MetaTasks
+    tasks:
+      HandTrajectory:
+        name: LeftHandTrajectory
+        type: bspline_trajectory
+        frame: LeftHand
+        stiffness: 500.0
+        duration: 5.0
+        weight: 100
+        dimWeight: [0.5, 0.5, 0.5, 1.0, 1.0, 1.0]
+        completion:
+          timeElapsed: true
+        target:
+          translation: [0.2, 0.4, 1.]
+          rotation: [0, -1.57, 0]
+        controlPoints:
+        [
+          [-0.2, 0.6, 1.2]
+        ]
+
+  ANA::PutRightHandAboveTable:
+    base: ANA::PutLeftHandAboveTable
+    tasks:
+      HandTrajectory:
+        name: RightHandTrajectory
+        frame: RightHand
+        target:
+          translation: [0.2, -0.4, 1.]
+          rotation: [0, -1.57, 0]
+        controlPoints:
+        [
+          [-0.2, -0.6, 1.2]
+        ]
+
+  ANA::PutHandsAboveTable:
+    base: Parallel
+    states: [ANA::PutLeftHandAboveTable, ANA::PutRightHandAboveTable]
+
+  # RHPS1 专用无碰撞准备轨迹。第一段只约束位置，让双手在身体近侧
+  # 竖直抬到桌面上方；不在低位改变手部方向或向桌面前方横扫。
+  ANA::PrepareRHPS1LiftLeftHand:
+    base: MetaTasks
+    tasks:
+      HandTrajectory:
+        name: PrepareRHPS1LiftLeftHandTrajectory
+        type: bspline_trajectory
+        frame: LeftHandSupportPlate
+        stiffness: 30.0
+        duration: 5.0
+        weight: 100
+        dimWeight: [0.0, 0.0, 0.0, 1.0, 1.0, 1.0]
+        activeJoints: [
+          L_SHOULDER_P, L_SHOULDER_R, L_SHOULDER_Y,
+          L_ELBOW_P, L_ELBOW_Y,
+          L_WRIST_R, L_WRIST_Y]
+        completion:
+          timeElapsed: true
+        target:
+          translation: [-0.02, 0.27, 1.07]
+          rotation: [0.0, 0.0, 0.0]
+        controlPoints:
+          - [-0.02, 0.27, 0.93]
+
+  ANA::PrepareRHPS1LiftRightHand:
+    base: ANA::PrepareRHPS1LiftLeftHand
+    tasks:
+      HandTrajectory:
+        name: PrepareRHPS1LiftRightHandTrajectory
+        frame: RightHandSupportPlate
+        activeJoints: [
+          R_SHOULDER_P, R_SHOULDER_R, R_SHOULDER_Y,
+          R_ELBOW_P, R_ELBOW_Y,
+          R_WRIST_R, R_WRIST_Y]
+        target:
+          translation: [-0.02, -0.27, 1.07]
+          rotation: [0.0, 0.0, 0.0]
+        controlPoints:
+          - [-0.02, -0.27, 0.93]
+
+  ANA::PrepareRHPS1LiftHands:
+    base: Parallel
+    states: [ANA::PrepareRHPS1LiftLeftHand, ANA::PrepareRHPS1LiftRightHand]
+
+  # 第二段保持安全高度，只向前和略微向外移动。
+  ANA::PrepareRHPS1ReachLeftHand:
+    base: ANA::PrepareRHPS1LiftLeftHand
+    tasks:
+      HandTrajectory:
+        name: PrepareRHPS1ReachLeftHandTrajectory
+        duration: 4.0
+        target:
+          translation: [0.20, 0.36, 1.07]
+          rotation: [0.0, 0.0, 0.0]
+        controlPoints:
+          - [0.08, 0.31, 1.07]
+
+  ANA::PrepareRHPS1ReachRightHand:
+    base: ANA::PrepareRHPS1LiftRightHand
+    tasks:
+      HandTrajectory:
+        name: PrepareRHPS1ReachRightHandTrajectory
+        duration: 4.0
+        target:
+          translation: [0.20, -0.36, 1.07]
+          rotation: [0.0, 0.0, 0.0]
+        controlPoints:
+          - [0.08, -0.31, 1.07]
+
+  ANA::PrepareRHPS1ReachHands:
+    base: Parallel
+    states: [ANA::PrepareRHPS1ReachLeftHand, ANA::PrepareRHPS1ReachRightHand]
+
+  # 第三段只下降少量，进入 Vive 接管前的工作高度。
+  ANA::PrepareRHPS1SettleLeftHand:
+    base: ANA::PrepareRHPS1ReachLeftHand
+    tasks:
+      HandTrajectory:
+        name: PrepareRHPS1SettleLeftHandTrajectory
+        duration: 2.5
+        target:
+          translation: [0.20, 0.36, 1.03]
+          rotation: [0.0, 0.0, 0.0]
+
+  ANA::PrepareRHPS1SettleRightHand:
+    base: ANA::PrepareRHPS1ReachRightHand
+    tasks:
+      HandTrajectory:
+        name: PrepareRHPS1SettleRightHandTrajectory
+        duration: 2.5
+        target:
+          translation: [0.20, -0.36, 1.03]
+          rotation: [0.0, 0.0, 0.0]
+
+  ANA::PrepareRHPS1SettleHands:
+    base: Parallel
+    states: [ANA::PrepareRHPS1SettleLeftHand, ANA::PrepareRHPS1SettleRightHand]
+
+  ANA::PrepareRHPS1ForVR:
+    base: Meta
+    transitions:
+      - [ANA::PrepareRHPS1LiftHands, OK, ANA::PrepareRHPS1ReachHands, Auto]
+      - [ANA::PrepareRHPS1ReachHands, OK, ANA::PrepareRHPS1SettleHands, Auto]
+
+  ANA::ROSPublisherState:
+    base: ROSPublisherState
+    UnityInitPoseTopic: "/mc_rtc_init_pose_unity"
+    emergency_state_topic: "avatar/state/emergency"
+    cameraFrame: ZMiniCenter
+
+  ANA::JoystickControl:
+    base: JoystickControl
+    modality: UnityHeadJoystick
+    max_vel_forward: 0.13
+    max_vel_backward: -0.1
+    max_vel_side: 0.05
+    max_vel_rot: 0.3
+    head_retargeting_state_name: "ANA::HeadRetargeting"
+    retargeting_state_names: ["ANA::LeftHandRetargeting", "ANA::LeftArmRetargeting", "ANA::RightHandRetargeting", "ANA::RightArmRetargeting"]
+    Unity:
+      Joystick:
+        timeout: 0.5
+        deadzone: [0.1, 0.4, 0.1]
+      HeadJoystick:
+        datastore_reference: RobotRetargetingReference
+        max_rot_yaw: 55
+        min_rot_yaw: 10
+        max_vel_pitch: -40
+        min_vel_pitch: 10
+        orientation_offset:
+          translation: [0,0,0]
+          rotation: [0,0,3.14]
+    Joystick:
+      left_retargeting_state_name: "ANA::LeftRetargeting"
+      right_retargeting_state_name: "ANA::RightRetargeting"
+    ROS:
+      walking_dir_ros_topic: "avatar/state/walk_dir"
+      forward_trigger_ros_topic: "avatar/trigger/forward"
+      stride_trigger_ros_topic: "avatar/trigger/side"
+      Joy:
+        topic: /joy
+        # Axis configuration for XBox controller
+        forward_axis: 1
+        side_axis: 0
+        rot_axis: 3
+        timeout: 0.5
+        deadzone: [0.1, 0.1, 0.1]
+
+  ANA::UpdatePosture:
+    base: UpdatePosture
+
+  ANA::MeasureObjectWeightLeft:
+    base: MeasureObjectWeight
+    Frame: LeftHand
+    Contact_Frame: RightHand
+    ForceSensorName: LeftHandForceSensor
+    contact_ditance: 0.1
+    pub_topic: avatar/state/left_weight
+    finger_force_topic: avatar/state/left_hand/force_fingers/index
+
+  ANA::MeasureObjectWeightRight:
+    base: ANA::MeasureObjectWeightLeft
+    ForceSensorName: RightHandForceSensor
+    pub_topic: avatar/state/right_weight
+    Contact_Frame: LeftHand
+    Frame: RightHand
+    finger_force_topic: avatar/state/right_hand/force_fingers/index
+
+  ANA::FacialExpression:
+    base: FacialExpression
+    sub_topic: avatar/face_data
+    activeJoints: [EYE_Y, EYE_P, EYELID_P, MOUTH_P]
+    stiffnesses: [100, 100, 100, 100]
+
+  ANA::RetargetingReference:
+    base: RetargetingReference
+    camera_pose_topic: avatar/zed_relative_pose
+    UseRos: false
+    reference_frame_topic: "avatar/retargeting_reference"
+    robot:
+      hrp4cr:
+        torsoFrame: "BODY"
+        camera_frame: "ZMiniCenter"
+        originOffset:
+          translation: [-0.15, 0 , 0.15]
+          rotation: [0,0,3.14]
+      hrp4:
+        camera_frame: "ZMiniCenter"
+        torsoFrame: "torso"
+        originOffset:
+          translation: [-0.15,0,-0.05]
+          rotation: [0,0,3.14]
+
+  ANA::SynchroWalking:
+    base: SynchroWalk
+    trigger_ros_topic: "avatar/trigger/walk"
+    state_ros_topic: "avatar/state/walking"
+    datastoreRetargetingReference: RobotRetargetingReference
+    next_ts_topic: "avatar/NextTs"
+    next_tds_topic: "avatar/NextTds"
+    stop_topic: "avatar/Stop"
+    support_foot_topic: "avatar/SupportFoot"
+    single_support_topic: "avatar/FeetUp"
+    step_id_topic: "avatar/StepID"
+    ratio_topic: "avatar/Ratio"
+    trigger_mode: true
+    use_vive_trakcer: true
+    activation_threshold: 0.5
+
+  # Handles pausing/resuming walking when suitable
+  # ex: emergency, no joystick inputs, CoM retargetting active, etc.
+  ANA::TriggerWalking:
+    base: TriggerWalking
+    datastoreJoy: LeftHandJoy
+
+
+  # Retargetting related states:
+  # The current method relies on retargetting w.r.t a marker placed on the operator's chest
+  # A similar reference is chosen on the robot's own chest (see RetargetingReference state)
+  # - For the head only orientation is retargetted
+  # - For the hands both orientation and position is retargetted. Note that appropriate scaling must be selected depending on the operator
+  # - Elbow orientation is also retargetted to avoid unnatural postures or redundant DoFs
+  # - CoM retargetting is a toggle behaviour that moves the CoM up/down and bends the chest according to CoM height. This coupled motion
+  #   was chosen to reduce the strain on the knees of HRP4CR
+  #
+
+  Avatar::Retargetting::Left:
+    base: Parallel
+    states:
+    - ANA::LeftHandRetargeting
+    - ANA::LeftArmRetargeting
+    - ANA::LeftRetargeting
+    - ANA::LeftGripper
+    - ANA::MeasureObjectWeightLeft
+
+  Avatar::Retargetting::Right:
+    base: Parallel
+    states:
+    - ANA::RightHandRetargeting
+    - ANA::RightArmRetargeting
+    - ANA::RightRetargeting
+    - ANA::RightGripper
+    - ANA::MeasureObjectWeightRight
+
+  Avatar::Retargetting::Head:
+    base: Parallel
+    states:
+    - ANA::HeadRetargeting
+    - ANA::Head
+    # ROS2 Vive 头显桥在头部任务创建后写入目标姿态。
+    - ANA::ViveHeadBridge
+
+  Avatar::Retargetting:
+    base: Parallel
+    states:
+    - ANA::ROSInputState
+    # Main retargetting states
+    - ANA::JoystickControl
+    - ANA::RetargetingReference
+    - Avatar::Retargetting::Head
+    - Avatar::Retargetting::Left
+    - Avatar::Retargetting::Right
+    - ANA::CoMRetargeting
+    # ROS2 Vive 手柄/追踪器桥在四个 retargetting task 创建后写入目标。
+    - ANA::ViveHandBridge
+    - ANA::IntentRecognitionBridge
+    - ANA::UI_SharedAutonomy
+    - ANA::SharedAutonomyLeftHand
+    - ANA::SharedAutonomyRightHand
+
+  Avatar::Retargetting::HeadPlusLeft:
+    base: Parallel
+    states:
+    # Main retargetting states
+    - ANA::RetargetingReference
+    - Avatar::Retargetting::Head
+    - Avatar::Retargetting::Left
+    - Avatar::Retargetting::Right
+    - ANA::ViveHandBridge
+    - ANA::IntentRecognitionBridge
+    - ANA::UI_SharedAutonomy
+    - ANA::SharedAutonomyLeftHand
+    - ANA::SharedAutonomyRightHand
+
+  ANA::WalkInternal:
+    base: Meta
+    transitions:
+    - [LIPMWalking::Standing, DoubleSupport, LIPMWalking::DoubleSupport]
+    - [LIPMWalking::DoubleSupport, SingleSupport, LIPMWalking::SingleSupport]
+    - [LIPMWalking::DoubleSupport, Standing, LIPMWalking::Standing]
+    - [LIPMWalking::SingleSupport, DoubleSupport, LIPMWalking::DoubleSupport]
+    configs:
+      LIPMWalking::Standing:
+        autoplay: false
+        autoplay_plans: [external]
+
+  ANA::WalkFSM:
+    base: Parallel
+    states: [LIPMWalking::RunStabilizer, ANA::WalkInternal]
+
+  ANA::DemoFSM:
+    base: Meta
+    transitions:
+      # XXX consider adding a "CheckEmergency" state that blocks until the emergency state is released
+      - [Pause, OK, ANA::PrepareRHPS1ForVR, Auto]
+      - [ANA::PrepareRHPS1ForVR, OK, @AVATAR_RETARGETTING_STATE@, Auto]
+    configs:
+      Pause:
+        duration: 2
+  # Full FSM for the demo
+  ANA::Demo:
+    base: Parallel
+    states:
+
+      - ANA::UpdatePosture      # Continuously update the robot's reference posture to the current tracked posture
+                                #This is done both to track the operator's motion more accurately, and as a safety
+                                #measure in case tasks are unexcpectedly removed.
+      - ANA::SynchroWalking
+
+      - ANA::FacialExpression
+
+      - ANA::DemoFSM           # Main demo logic implemented as a sub-FSM
+
+      @AVATAR_DEMO_WALK_FSM_STATE@
+
+transitions:
+  - [@AVATAR_INITIAL_STATE@, @AVATAR_INITIAL_STATE_OUTPUT@, ANA::Demo]
+
+simulation: @SIM_CONF@
+use_emergency_button: false
+
+Plugins: @AVATAR_PLUGINS@
+
+ObserverPipelines:
+  name: "LIPMWalkingObserverPipeline"
+  gui: false
+  observers:
+    - type: Encoder
+    - type: Attitude
+      required: true
+    - type: KinematicInertial
+      config:
+        anchorFrame:
+          maxAnchorFrameDiscontinuity: 0.02
+    - type: BodySensor
+      update: false
+
+mpc:
+  weights:
+    jerk: 1.0
+    vel: [10.0, 100.0]
+    zmp: 1000.0
+
+ExternalWrenches:
+  surfaces: ["LeftHand", "RightHand"]
+
+plans:
+  hrp4cr:
+    ashibumi: # stepping in place
+      double_support_duration: 0.5
+      single_support_duration: 0.8
+      com_height: 0.817301
+      swing_height: 0.04
+      contacts:
+        - pose:
+            translation: [0.035, -0.07, 0.0]
+          surface: RightFootCenter
+        - pose:
+            translation: [0.035, 0.07, 0.0]
+          surface: LeftFootCenter
+        - pose:
+            translation: [0.035, -0.07, 0.0]
+          surface: RightFootCenter
+        - pose:
+            translation: [0.035, 0.07, 0.0]
+          surface: LeftFootCenter
+        - pose:
+            translation: [0.035, -0.07, 0.0]
+          surface: RightFootCenter
+        - pose:
+            translation: [0.035, 0.07, 0.0]
+          surface: LeftFootCenter
+        - pose:
+            translation: [0.035, -0.07, 0.0]
+          surface: RightFootCenter
+        - pose:
+            translation: [0.035, 0.07, 0.0]
+          surface: LeftFootCenter
+        - pose:
+            translation: [0.035, -0.07, 0.0]
+          surface: RightFootCenter
+        - pose:
+            translation: [0.035, 0.07, 0.0]
+          surface: LeftFootCenter
+        - pose:
+            translation: [0.035, -0.07, 0.0]
+          surface: RightFootCenter
+        - pose:
+            translation: [0.035, 0.07, 0.0]
+          surface: LeftFootCenter
+    custom_backward:
+      double_support_duration: 0.5
+      single_support_duration: 0.8
+      step_length: 0.1
+      swing_height: 0.05
+      com_height: 0.817301
+      contacts:
+        - pose:
+            translation: [0.0, -0.07, 0.0]
+          surface: RightFootCenter
+        - pose:
+            translation: [0.0, 0.07, 0.0]
+          surface: LeftFootCenter
+    custom_forward:
+      double_support_duration: 0.4
+      single_support_duration: 0.7
+      step_length: 0.15
+      swing_height: 0.04
+      com_height: 0.817301
+      contacts:
+        - pose:
+            translation: [0.0, -0.07, 0.0]
+          surface: RightFootCenter
+        - pose:
+            translation: [0.0, 0.07, 0.0]
+          surface: LeftFootCenter
+    custom_lateral:
+      double_support_duration: 0.4
+      single_support_duration: 0.7
+      step_length: 0.1
+      swing_height: 0.04
+      com_height: 0.817301
+      contacts:
+        - pose:
+            translation: [0.0, -0.07, 0.0]
+          surface: RightFootCenter
+        - pose:
+            translation: [0.0, 0.07, 0.0]
+          surface: LeftFootCenter
+      mpc:
+        weights:
+          jerk: 1.0
+          vel: [10.0, 300.0]
+          zmp: 1000.0
+    warmup:
+      double_support_duration: 0.5
+      single_support_duration: 0.7
+      swing_height: 0.04
+      com_height: 0.817301
+      contacts:
+        - pose:
+            translation: [0.035, -0.07, 0.0]
+          surface: RightFootCenter
+        - pose:
+            translation: [0.035, 0.07, 0.0]
+          surface: LeftFootCenter
+        - pose:
+            translation: [0.035, -0.07, 0.0]
+          surface: RightFootCenter
+        - pose:
+            translation: [0.035, 0.07, 0.0]
+          surface: LeftFootCenter
+    external:
+      double_support_duration: 0.5
+      single_support_duration: 0.7
+      ####
+      # Configures the maximum allowed time for the planner to compute a solution.
+      # If the planner could not compute a plan in the allowed time, the robot will pause walking until a new request
+      # is sent and successful.
+      # If the robot pauses walking too often, try increasing this parameter.
+      ####
+      allowed_planning_time:
+        # the maximum allowed time during standing may be arbitrarely large (we don't need to react fast)
+        # This corresponds to the absolute maximum time that the user will have to wait for a plan (or notification of failure)
+        standing: 2.0
+        # the maximum allowed time during single support should be as short as possible but still ensure that in normal operations
+        # the planner has enough time to come up with a solution.
+        # This parameter MUST BE less than single_support_duration, and allow a sufficient margin to account for communication delay with the planner
+        # - reducing it increases reactivity (we have a longer window of opportunity during which the single support phase can request a plan)
+        # - increasing it decrases reactivity but increases the likelyhood that the planner will successfully find a solution
+        single_support: 0.2
+      swing_height: 0.04
+      com_height: 0.817301
+      contacts:
+        - pose:
+            translation: [0.035, -0.07, 0.0]
+          surface: RightFootCenter
+        - pose:
+            translation: [0.035, 0.07, 0.0]
+          surface: LeftFootCenter
+      mpc:
+        weights:
+          jerk: 1.0
+          vel: [10.0, 100.0]
+          zmp: 1000.0
+      # Offset (x,y,theta) between the plan's target frame and the left/right foot expressed in target frame
+      leftFootLandingOffset: [0.0, 0.07, 0.0] # x, y, theta
+      rightFootLandingOffset: [0.0, -0.07, 0.0] # x, y, theta
+
+@AVATAR_EXTRA_CONFIG@

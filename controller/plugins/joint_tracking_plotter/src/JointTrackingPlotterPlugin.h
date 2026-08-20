@@ -1,0 +1,33 @@
+/*
+ * Copyright 2021 CNRS-UM LIRMM, CNRS-AIST JRL
+ */
+
+#pragma once
+
+#include <mc_control/GlobalPlugin.h>
+
+namespace mc_plugin
+{
+
+struct JointTrackingPlotter : public mc_control::GlobalPlugin
+{
+  void init(mc_control::MCGlobalController & controller, const mc_rtc::Configuration & config) override;
+
+  void reset(mc_control::MCGlobalController & controller) override;
+
+  void before(mc_control::MCGlobalController &) override;
+
+  void after(mc_control::MCGlobalController & controller) override;
+
+  mc_control::GlobalPlugin::GlobalPluginConfiguration configuration() override;
+
+  ~JointTrackingPlotter() override;
+
+protected:
+  std::string joint_;
+  std::vector<std::string> joints_;
+  std::vector<std::string> category_{"Joint Tracking Plotter"};
+  double t_ = 0;
+};
+
+} // namespace mc_plugin

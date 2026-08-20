@@ -1,0 +1,6 @@
+# RHPS1 仿真只发布控制机器人状态，避免重复发布 real/env 模型塞满 ROS 队列。
+publish:
+  control: true
+  env: false
+  real: false
+  timestep: 0.05

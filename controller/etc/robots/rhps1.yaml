@@ -1,0 +1,528 @@
+# 插件由控制器变体统一选择：LIPM 版本加载行走插件，none 版本保持为空。
+ExternalWrenches:
+  surfaces: [LeftHandSupportPlate, RightHandSupportPlate]
+
+collisions:
+  rhps1:
+    iDist: 0.01
+    sDist: 0.005
+    simplified_all_bodies: [BODY, HEAD_P_LINK, CHEST_P_LINK,
+                           L_SHOULDER_P_LINK, L_SHOULDER_R_LINK, L_SHOULDER_Y_LINK,
+                           L_ELBOW_Y_LINK, L_WRIST_Y_LINK, L_WRIST_R_LINK, L_WRIST_P_LINK,
+                           R_SHOULDER_P_LINK, R_SHOULDER_R_LINK, R_SHOULDER_Y_LINK, R_ELBOW_P_LINK,
+                           R_WRIST_Y_LINK, R_WRIST_R_LINK, R_WRIST_P_LINK,
+                           L_CROTCH_P_LINK ,
+                           R_CROTCH_P_LINK ,
+                           R_KNEE_P_LINK, L_KNEE_P_LINK]
+    cstr_set_0:
+      b1: [L_SHOULDER_Y_LINK, L_ELBOW_Y_LINK, L_HAND_LINK]
+      b2: [R_CROTCH_P_LINK , L_CROTCH_Y_LINK , BODY, HEAD_P_LINK, CHEST_P_LINK]
+      joints: [L_SHOULDER_P, L_SHOULDER_R, L_SHOULDER_Y, L_ELBOW_P, L_WRIST_R, L_WRIST_Y]
+    cstr_set_1:
+      b1: [R_SHOULDER_Y_LINK, R_ELBOW_Y_LINK, R_HAND_LINK]
+      b2: [R_CROTCH_P_LINK , L_CROTCH_Y_LINK , BODY, HEAD_P_LINK, CHEST_P_LINK]
+      joints: [R_SHOULDER_P, R_SHOULDER_R, R_SHOULDER_Y, R_ELBOW_P, R_WRIST_R, R_WRIST_Y]
+    cstr_set_2:
+      b1: [R_ELBOW_Y_LINK, R_HAND_LINK]
+      b2: [L_ELBOW_Y_LINK, L_HAND_LINK]
+      joints: [L_SHOULDER_P, L_SHOULDER_R, L_SHOULDER_Y, L_ELBOW_P, L_WRIST_R, L_WRIST_Y,
+               R_SHOULDER_P, R_SHOULDER_R, R_SHOULDER_Y, R_ELBOW_P, R_WRIST_R, R_WRIST_Y]
+    cstr_set_3:
+      b1: [ L_CROTCH_P_LINK]
+      b2: [ R_CROTCH_P_LINK]
+      joints: []
+
+# Configuration for LIPMWalking
+robot_models:
+  rhps1:
+    sole: # FIXME Copied from HRP4CR INCORRECT
+      half_length: 0.08
+      half_width: 0.038
+      friction: 0.7
+    stabilizer: &stabilizer-rhps1
+      dcm_tracking:
+        gains:
+          prop: [0,0]
+          integral: [0,0]
+          deriv: [0., 0.]
+          comdError: 0.
+      admittance:
+        copFzLambda: [30,30,30]
+        copFzDelay: 0.0
+        df: [0.0, 0.0, 0.0001]
+        cop: [0.01, 0.01]
+        maxVel:
+          angular: [3., 3., 3.]
+          linear: [1., 1., 1.]
+      tasks:
+        contact:
+          constrainCoP: false
+          damping: 150.0
+        com:
+          stiffness: [100.,100.,100.]
+          dimWeight: [1 , 1 , 1]
+          weight: 1000.
+          height: 0.92
+      dcm_bias:
+        dcmMeasureErrorStd: 0.001
+        biasDriftPerSecondStd: 0.0001
+        zmpMeasureErrorStd: 0.0005
+        comBiasLimit: [0.1,0.1]
+        biasLimit: [0.05, 0.02]
+        withDCMBias: true
+        correctCoMPos: true
+      external_wrench:
+        ## general ##
+        add_expected_com_offset: false
+        subtract_measured_value: false
+        exclude_from_dcm_bias_est : true
+        ## com offset ##
+        modify_com_error: true
+        modify_zmp_error: false
+        modify_zmp_error_d: false
+        com_offset_err_com_limit: 0.05
+        com_offset_err_zmp_limit: 0.05
+        ## filter ##
+        ext_wrench_sum_cutoff: 0.05
+        com_offset_cutoff: 0.05
+        com_offset_com_cutoff: 10.0
+        derivator_time_constant: 1.0
+        ## gain (not loaded automatically) ##
+        ext_wrench_gain: [1, 1, 1]
+    stabilizer_sgsupp: &stabilizer-sgsupp-rhps1
+      tasks:
+        com:
+          weight: 1000
+      admittance:
+        cop: [0.005, 0.005]
+    stabilizer_dblsupp: &stabilizer-dblsupp-rhps1
+      admittance:
+        copFzLambda: [30, 30, 30]
+        copFzDelay: 0.0
+        df: [0.0, 0.0, 0.00015]
+    safety_tresholds:
+      MIN_DS_PRESSURE: 0
+
+# ISMPC
+stabilizer: *stabilizer-rhps1
+stabilizer_sgsupp: *stabilizer-sgsupp-rhps1
+stabilizer_dblsupp: *stabilizer-dblsupp-rhps1
+
+robots:
+  rhps1:
+    frames:
+      - name: ZMiniCenter
+        parent: HEAD_P_LINK
+        # FIXME Correct HEAD_P_Link to ZMiniCenter transform
+        X_p_f:
+          translation: [0.11, 0, 0.078]
+          rotation: [0, 0.436, 0]
+
+states:
+  ANA::JoystickControl:
+    modality: UnityJoystick
+    max_vel_forward: 0.15
+    max_vel_backward: -0.125
+    max_vel_side: 0.15
+    max_vel_rot: 0.3
+  ANA::LeftArmRetargeting:
+    robot:
+      rhps1:
+        target_frame: L_SHOULDER_Y_LINK
+        # FIXME Not sure what these offsets are supposed to be?
+        originOffset:
+          translation: [0., 0., 0.]
+          rotation: [3.14, -1.0472, 1.57]
+        targetOffset:
+          translation: [0,0,0]
+          rotation: [1.57, 0.0, -1.57]
+        activeJoints: [
+          L_SHOULDER_P, L_SHOULDER_R, L_SHOULDER_Y,
+          L_ELBOW_P, L_ELBOW_Y,
+          L_WRIST_R, L_WRIST_Y]
+  ANA::LeftHandRetargeting:
+    robot:
+      rhps1:
+        origin: HEAD_P_LINK # which frame for the camera?
+        target: LeftHandSupportPlate # which frame for the hand
+        target_ori: L_SHOULDER_Y_LINK
+        # FIXME Not sure what these offsets are supposed to be?
+        originOffset:
+          rotation: [3.14,-1.0472,1.57]
+        targetOffset:
+          translation: [0, -0.1, 0]
+          rotation: [0.0, -0.26, 1.57]
+        activeJoints: [
+          L_SHOULDER_P, L_SHOULDER_R, L_SHOULDER_Y,
+          L_ELBOW_P, L_ELBOW_Y,
+          L_WRIST_R, L_WRIST_Y]
+        # 软肩部解支路约束：以进入遥操作时的实际肩角为参考，避免跳到另一局部极小值。
+        postureOverrideActive: true
+        postureOverrideJoint: "L_SHOULDER_P"
+        postureOverrideUseCurrentTarget: true
+        postureOverride:
+          type: posture
+          weight: 50.0
+          stiffness: 2.0
+          target:
+            L_SHOULDER_P: [-0.5]
+  ANA::RightArmRetargeting:
+    robot:
+      rhps1:
+        target_frame: R_SHOULDER_Y_LINK
+        # FIXME Not sure what these offsets are supposed to be?
+        originOffset:
+          translation: [0.,0.,0.]
+          rotation: [3.14,-1.0472,1.57]
+        targetOffset:
+          translation: [0,0,0]
+          rotation: [1.57, 0.0, -1.57]
+        activeJoints: [
+          R_SHOULDER_P, R_SHOULDER_R, R_SHOULDER_Y,
+          R_ELBOW_P, R_ELBOW_Y,
+          R_WRIST_R, R_WRIST_Y]
+  ANA::RightHandRetargeting:
+    robot:
+      rhps1:
+        origin: HEAD_P_LINK # which frame for the camera?
+        target: RightHandSupportPlate # which frame for the hand
+        # FIXME Not sure what these offsets are supposed to be?
+        originOffset:
+          rotation: [3.14,-1.0472,1.57]
+        targetOffset:
+          translation: [0.0, -0.1, 0.0]
+          rotation: [0.0, -0.26, 1.57]
+        activeJoints: [
+          R_SHOULDER_P, R_SHOULDER_R, R_SHOULDER_Y,
+          R_ELBOW_P, R_ELBOW_Y,
+          R_WRIST_R, R_WRIST_Y]
+        # 软肩部解支路约束：以进入遥操作时的实际肩角为参考，避免跳到另一局部极小值。
+        postureOverrideActive: true
+        postureOverrideJoint: "R_SHOULDER_P"
+        postureOverrideUseCurrentTarget: true
+        postureOverride:
+          type: posture
+          weight: 50.0
+          stiffness: 2.0
+          target:
+            R_SHOULDER_P: [-0.5]
+  ANA::HeadRetargeting:
+    robot:
+      rhps1:
+        target_frame: HEAD_P_LINK
+        # FIXME Offsets meaning?
+        body_frame_relative_pose:
+          translation: [0.1,0,0.1]
+          rotation: [0,0.30,0]
+        originOffset:
+          translation: [0.,0.,0.]
+          rotation: [3.14,-1.0472,1.57]
+        targetOffset:
+          translation: [0,0,0]
+          rotation: [0.,0.,1.57]
+        activeJoints: [HEAD_P, HEAD_Y]
+  ANA::RetargetingReference:
+    robot:
+      rhps1:
+        torsoFrame: BODY
+        camera_frame: ZMiniCenter
+        # FIXME Not sure what this offset is supposed to represent?
+        originOffset:
+          translation: [-0.15, 0 , 0.15]
+          rotation: [0,0,3.14]
+  ANA::LeftGripper:
+    robot:
+      rhps1:
+        gripper: l_gripper
+        thumbJoint: L_HAND
+        fingersJoint: L_HAND
+  ANA::RightGripper:
+    robot:
+      rhps1:
+        gripper: r_gripper
+        thumbJoint: R_HAND
+        fingersJoint: R_HAND
+  ANA::MeasureObjectWeightLeft:
+    Frame: LeftHandSupportPlate
+    Contact_Frame: RightHandSupportPlate
+    ForceSensorName: LeftHandForceSensor
+
+  ANA::MeasureObjectWeightRight:
+    Frame: RightHandSupportPlate
+    Contact_Frame: LeftHandSupportPlate
+    ForceSensorName: RightHandForceSensor
+
+  # ROS2 Vive 输入桥。校准矩阵沿用已经完成现场验证的自然站立标定；
+  # RHPS1 的 frame、夹爪关节和位置补偿单独配置，不继承 HRP4CR 参数。
+  ANA::ViveHandBridge:
+    base: ViveHandBridge
+    left_topic: "/controller_2"
+    right_topic: "/controller_1"
+    left_serial: "LHR-17C214FD"
+    right_serial: "LHR-F6AD8996"
+    left_arm_topic: "/tracker_1"
+    right_arm_topic: "/tracker_2"
+    waist_topic: "/tracker_3"
+    left_arm_serial: "LHR-FEFB9C65"
+    right_arm_serial: "LHR-5866134B"
+    waist_serial: "LHR-55BE06AD"
+    left_task: "ANA::LeftHandRetargetingTask"
+    right_task: "ANA::RightHandRetargetingTask"
+    left_arm_task: "ANA::LeftArmRetargetingTask"
+    right_arm_task: "ANA::RightArmRetargetingTask"
+    scale: 1.0
+    axis_scale: [1.0, 1.0, 1.0]
+    neutral_body_calibration: true
+    # 2026-08-18：固定可旋转的腰部 tracker 后重新完成自然站立标定；只更新方向矩阵。
+    neutral_body_from_waist_x: [0.243763, -0.113257, 0.963199]
+    neutral_body_from_waist_y: [-0.585090, -0.809240, 0.052919]
+    neutral_body_from_waist_z: [0.773466, -0.576458, -0.263528]
+    left_hand_neutral_correction_x: [-0.227006, -0.862317, -0.452634]
+    left_hand_neutral_correction_y: [0.145154, -0.489534, 0.859818]
+    left_hand_neutral_correction_z: [-0.963015, 0.129482, 0.236296]
+    right_hand_neutral_correction_x: [0.218690, -0.945695, 0.240490]
+    right_hand_neutral_correction_y: [0.158839, 0.277669, 0.947455]
+    right_hand_neutral_correction_z: [-0.962780, -0.169000, 0.210937]
+    left_arm_neutral_correction_x: [0.224394, 0.342305, -0.912401]
+    left_arm_neutral_correction_y: [0.410217, 0.816101, 0.407064]
+    left_arm_neutral_correction_z: [0.883951, -0.465625, 0.042709]
+    right_arm_neutral_correction_x: [-0.282526, 0.928690, 0.240237]
+    right_arm_neutral_correction_y: [-0.076794, -0.271533, 0.959361]
+    right_arm_neutral_correction_z: [0.956181, 0.252595, 0.148033]
+    waist_to_robot_position_forward: [0.233577, -0.120917, 0.964791]
+    waist_to_robot_position_left: [0.328798, 0.943609, 0.038660]
+    waist_to_robot_position_up: [0.915060, -0.308191, -0.260163]
+    direct_hand_orientation_axis_fix_x: [0.0, -1.0, 0.0]
+    direct_hand_orientation_axis_fix_y: [-1.0, 0.0, 0.0]
+    direct_hand_orientation_axis_fix_z: [0.0, 0.0, -1.0]
+    direct_hand_rotation_axis_mode: 1
+    direct_hand_rotation_sign_fix: [1.0, 1.0, 1.0]
+    wrist_pivot_compensation: true
+    left_controller_hand_offset: [0.0, 0.0, 0.1587]
+    right_controller_hand_offset: [0.0, 0.0, 0.1494]
+    left_position_horizontal_fix: false
+    left_position_horizontal_mode: 0
+    debug_hand_mapping: false
+    debug_hand_mapping_interval: 1.0
+    max_step: 0.65
+    # 基础遥操作阶段关闭输入延迟。
+    input_delay: 0
+    auto_zero: true
+    require_initial_two_hand_reset: true
+    initial_zero_requires_arm_trackers: false
+    use_waist_reference: true
+    direct_waist_control: true
+    direct_waist_keep_hand_side: true
+    tracking_handover_duration: 2.0
+    direct_waist_max_distance: 1.2
+    robot_waist_frame: "BODY"
+    left_hand_orientation_offset_rpy_deg: [0.0, 0.0, 0.0]
+    right_hand_orientation_offset_rpy_deg: [0.0, 0.0, 0.0]
+    control_grippers: true
+    invert_hand_orientation_delta: true
+    left_hand_rotation_axis_mode: 3
+    right_hand_rotation_axis_mode: 3
+    invert_arm_orientation_delta: false
+    arm_rotation_sign_fix: [1.0, -1.0, 1.0]
+    arm_angular_velocity_sign_fix: [1.0, 1.0, 1.0]
+    use_velocity_feedforward: true
+    velocity_feedforward_gain: 1.0
+    use_linear_velocity_feedforward: true
+    use_angular_velocity_feedforward: false
+    linear_velocity_gain: 1.0
+    angular_velocity_gain: 1.0
+    # 只平滑速度前馈，不改变已经完成校准的位置和姿态目标。
+    velocity_filter_alpha: 0.7
+    # Vive 数据中断时及时清零保持速度，避免旧命令持续生效。
+    velocity_sample_timeout: 0.1
+    velocity_validation: false
+    publish_legacy_unity_topics: true
+    # 发布夹具闭合状态；MuJoCo 端仍由 ANA_RHPS1_MAGNET 开关决定是否施加磁吸力。
+    control_mujoco_adhesion: true
+    control_hand_orientation: true
+    # trigger 超过该阈值时只发送一次“操作者确认已抓住”事件，不再控制夹具。
+    grasp_notification_trigger_threshold: 0.9
+    grasp_event_topic: /rtgr/operator/grasp_events
+    left_gripper: "l_gripper"
+    right_gripper: "r_gripper"
+    left_gripper_joint: "L_HAND"
+    right_gripper_joint: "R_HAND"
+    open_value: 1.0
+    closed_value: 0.0
+    robot:
+      rhps1:
+        robot_waist_frame: "BODY"
+        left_robot_hand_frame: "LeftHandSupportPlate"
+        right_robot_hand_frame: "RightHandSupportPlate"
+        # 虚拟 waist reference 相对实体后腰 tracker 的固定位置，坐标顺序为 [前, 左, 上]。
+        # 后腰 tracker 位于人体腰部中心后方，将虚拟 waist reference
+        # 向身体前方移动 18 cm、向下移动 20 cm。
+        waist_reference_offset_body: [0.18, 0.00, -0.20]
+        # 手部不再承担腰部安装位置补偿。
+        hand_position_offset_body: [0.0, 0.0, 0.0]
+        left_gripper: "l_gripper"
+        right_gripper: "r_gripper"
+        left_gripper_joint: "L_HAND"
+        right_gripper_joint: "R_HAND"
+        control_mujoco_adhesion: true
+
+  ANA::ViveHeadBridge:
+    base: ViveHeadBridge
+    topic: "/hmd"
+    task: "ANA::HeadRetargetingTask"
+    enable: true
+    require_external_zero: true
+    # 模式 3 以复位时的 HMD 局部坐标为基准，不依赖 SteamVR 房间朝向。
+    head_rotation_axis_mode: 3
+    # 先保持一比一映射完成校准；RHPS1 的 HEAD_P 关节限位仍保持不变。
+    head_pitch_gain: 1.00
+    zero_request_key: "ANA::ViveHeadBridge::zero_request"
+
+plans:
+  rhps1:
+    #FIXME Copied from hrp4cr
+    warmup:
+      double_support_duration: 0.5
+      single_support_duration: 0.7
+      swing_height: 0.04
+      com_height: 0.92
+      contacts:
+        - pose:
+            translation: [0.035, -0.07, 0.0]
+          surface: RightFootCenter
+        - pose:
+            translation: [0.035, 0.07, 0.0]
+          surface: LeftFootCenter
+        - pose:
+            translation: [0.035, -0.07, 0.0]
+          surface: RightFootCenter
+        - pose:
+            translation: [0.035, 0.07, 0.0]
+          surface: LeftFootCenter
+    custom_backward:
+      double_support_duration: 0.5
+      single_support_duration: 0.8
+      step_length: 0.1
+      swing_height: 0.05
+      com_height: 0.92
+      contacts:
+        - pose:
+            translation: [0.0, -0.07, 0.0]
+          surface: RightFootCenter
+        - pose:
+            translation: [0.0, 0.07, 0.0]
+          surface: LeftFootCenter
+    custom_forward:
+      double_support_duration: 0.4
+      single_support_duration: 0.7
+      step_length: 0.15
+      swing_height: 0.04
+      com_height: 0.92
+      contacts:
+        - pose:
+            translation: [0.0, -0.07, 0.0]
+          surface: RightFootCenter
+        - pose:
+            translation: [0.0, 0.07, 0.0]
+          surface: LeftFootCenter
+    custom_lateral:
+      double_support_duration: 0.4
+      single_support_duration: 0.7
+      step_length: 0.1
+      swing_height: 0.04
+      com_height: 0.92
+      contacts:
+        - pose:
+            translation: [0.0, -0.07, 0.0]
+          surface: RightFootCenter
+        - pose:
+            translation: [0.0, 0.07, 0.0]
+          surface: LeftFootCenter
+      mpc:
+        weights:
+          jerk: 1.0
+          vel: [10.0, 300.0]
+          zmp: 1000.0
+    external:
+      double_support_duration: 0.5
+      single_support_duration: 0.7
+      ####
+      # Configures the maximum allowed time for the planner to compute a solution.
+      # If the planner could not compute a plan in the allowed time, the robot will pause walking until a new request
+      # is sent and successful.
+      # If the robot pauses walking too often, try increasing this parameter.
+      ####
+      allowed_planning_time:
+        # the maximum allowed time during standing may be arbitrarely large (we don't need to react fast)
+        # This corresponds to the absolute maximum time that the user will have to wait for a plan (or notification of failure)
+        standing: 2.0
+        # the maximum allowed time during single support should be as short as possible but still ensure that in normal operations
+        # the planner has enough time to come up with a solution.
+        # This parameter MUST BE less than single_support_duration, and allow a sufficient margin to account for communication delay with the planner
+        # - reducing it increases reactivity (we have a longer window of opportunity during which the single support phase can request a plan)
+        # - increasing it decrases reactivity but increases the likelyhood that the planner will successfully find a solution
+        single_support: 0.2
+      swing_height: 0.04
+      com_height: 0.92
+      contacts:
+        - pose:
+            translation: [0.035, -0.07, 0.0]
+          surface: RightFootCenter
+        - pose:
+            translation: [0.035, 0.07, 0.0]
+          surface: LeftFootCenter
+      mpc:
+        weights:
+          jerk: 1.0
+          vel: [10.0, 100.0]
+          zmp: 1000.0
+      # Offset (x,y,theta) between the plan's target frame and the left/right foot expressed in target frame
+      leftFootLandingOffset: [0.0, 0.07, 0.0] # x, y, theta
+      rightFootLandingOffset: [0.0, -0.07, 0.0] # x, y, theta
+
+footsteps_planner:
+  feet_distance: 0.21
+  kinematics_cstr: [0.6, 0.2]
+  max_rotation: 0.3
+walking_controller:
+  footstep_height: 0.05
+  torsoBodyName: "CHEST_P_LINK"
+  leftFootLink: "L_ANKLE_P"
+  rightFootLink: "R_ANKLE_P"
+  left_hand_surface: "LeftHandWrench"
+  right_hand_surface: "RightHandWrench"
+  right_foot_surface: "RightFootCenter"
+  left_foot_surface: "LeftFootCenter"
+ismpc:
+  u_cstr_square: [10,10]
+  zmp_cstr_square: [0.2,0.12]
+  zmp_ref_offset: [0.0,0.01]
+  offset: [0.0,0.0]
+  zmp_cstr_square_static: [0.2,0.09]
+  offset_static: [0.0,0]
+  next_stp_cstr_ratio: 1
+  lambda: 30
+  lambda_dbl_supp: 30
+  zmp_delay: 0.025
+  feet_distance: 0.21
+  with_external_disturbance_highpass_filter: false
+  ts: 1.2
+  tds_ratio: 0.25
+
+configs:
+  Avatar::Initial::ISMPC:
+    target:
+      R_SHOULDER_P: [-0.523598776]
+      R_SHOULDER_R: [-0.34906585]
+      R_SHOULDER_Y: [0.087266463]
+      R_ELBOW_P:    [-2.094395102]
+      R_ELBOW_Y:    [-0.34906585]
+      R_WRIST_R:    [0.0]
+      R_WRIST_Y:    [0.34906585]
+      L_SHOULDER_P: [-0.523598776]
+      L_SHOULDER_R: [0.34906585]
+      L_SHOULDER_Y: [-0.087266463]
+      L_ELBOW_P:    [-2.094395102]
+      L_ELBOW_Y:    [0.34906585]
+      L_WRIST_R:    [0.0]
+      L_WRIST_Y:    [-0.34906585]

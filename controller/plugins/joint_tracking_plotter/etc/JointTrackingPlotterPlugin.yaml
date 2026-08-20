@@ -1,0 +1,17 @@
+devices:
+  - name: LeftHandForceSensors
+    port: "/dev/fingers_force_left"
+    category: [ "Avatar", "Unity", "LeftHandForce" ]
+  - name: RightHandForceSensors
+    port: "/dev/fingers_force_right"
+    category: [ "Avatar", "Unity", "RightHandForce" ]
+
+#devices:
+#  - name: LeftHandForceSensors
+#    adapter: ""
+#    device: "60:98:66:A1:15:C7"
+#    category: [ "Avatar", "Unity", "LeftHandForce" ]
+#  - name: RightHandForceSensors
+#    adapter: ""
+#    device: "E4:E1:12:95:FB:0C"
+#    category: [ "Avatar", "Unity", "RightHandForce" ]

@@ -1,0 +1,18 @@
+category: [ "Avatar", "Unity"]
+devices:
+  - name: LeftHandForceSensors
+    port: "/dev/force_fingers_left"
+    timeout: 10
+  - name: RightHandForceSensors
+    port: "/dev/force_fingers_right"
+    timeout: 10
+
+#devices:
+#  - name: LeftHandForceSensors
+#    adapter: ""
+#    device: "60:98:66:A1:15:C7"
+#    category: [ "Avatar", "Unity", "LeftHandForce" ]
+#  - name: RightHandForceSensors
+#    adapter: ""
+#    device: "E4:E1:12:95:FB:0C"
+#    category: [ "Avatar", "Unity", "RightHandForce" ]

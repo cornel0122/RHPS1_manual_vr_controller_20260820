@@ -1,0 +1,42 @@
+states:
+  ANA::LeftHandRetargeting:
+    robot:
+      hrp4:
+        origin: "NECK_P_LINK" # which frame for the camera?
+        target: "LeftHand" # which frame for the hand
+        target_ori: "L_SHOULDER_Y_LINK"
+        originOffset:
+          translation: [0.,0.15,0.]
+          rotation: [0,1.57,0.]
+        targetOffset:
+          translation: [0,0.,0]
+          rotation: [0.,0.0,-1.57]
+        target_OriOffset:
+          translation: [0,0,0]
+          rotation: [1.57,0.0,-1.57]
+        activeJoints: [
+          L_SHOULDER_P, L_SHOULDER_R, L_SHOULDER_Y,
+          L_ELBOW_P,
+          L_WRIST_Y, L_WRIST_R, L_WRIST_P]
+          # We should try enabling CHEST joints too
+          # CHEST_P, CHEST_R, CHEST_Y
+  ANA::RightHandRetargeting:
+    robot:
+      hrp4:
+        target: "RightHand"
+        target_ori: "R_SHOULDER_Y_LINK"
+        originOffset:
+          translation: [0.,-0.05,0.]
+          rotation: [0,1.57,0]
+        targetOffset:
+          translation: [0,0,0]
+          rotation: [3.14,0,-1.57]
+        target_OriOffset:
+          translation: [0,0,0]
+          rotation: [1.57,0.,-1.57]
+        activeJoints: [
+          R_SHOULDER_P, R_SHOULDER_R, R_SHOULDER_Y,
+          R_ELBOW_P,
+          R_WRIST_Y, R_WRIST_R, R_WRIST_P]
+          # We should try enabling CHEST joints too
+          # CHEST_P, CHEST_R, CHEST_Y
