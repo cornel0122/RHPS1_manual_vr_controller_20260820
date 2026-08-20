@@ -16,11 +16,25 @@ if(NOT TARGET vr_interface_msgs)
   )
 endif()
 
+# 旧 retargetting state 仍使用 Neuron mocap 的公共类型，并在启动时读取
+# 它提供的兼容 datastore。实际姿态目标仍全部由 Vive bridge 写入。
+if(NOT TARGET mc_neuron_mocap_plugin)
+  AddProject(
+    mc_neuron_mocap_plugin
+    SOURCE_DIR
+      "${RHPS1_MANUAL_VR_EXTENSION_ROOT}/dependencies/mc_neuron_mocap_plugin"
+    CMAKE_ARGS
+      -DBUILD_TESTING=OFF
+      -DAUTOLOAD_MC_NEURON_MOCAP_PLUGIN=OFF
+    DEPENDS mc_rtc
+  )
+endif()
+
 # 研究所 Control PC 的定制 superbuild 通常已包含下列工程。
 # 只对当前 superbuild 已注册的 target 建立显式依赖，以兼容
 # nulspace-compliance 等现场分支的命名差异。
-set(RHPS1_MANUAL_VR_CONTROLLER_DEPENDS mc_rtc vr_interface_msgs)
-foreach(optional_dependency lipm_walking_controller mc_neuron_mocap_plugin)
+set(RHPS1_MANUAL_VR_CONTROLLER_DEPENDS mc_rtc vr_interface_msgs mc_neuron_mocap_plugin)
+foreach(optional_dependency lipm_walking_controller)
   if(TARGET "${optional_dependency}")
     list(APPEND RHPS1_MANUAL_VR_CONTROLLER_DEPENDS "${optional_dependency}")
   endif()
