@@ -56,6 +56,21 @@ Control PC 需要构建：
 
 Operator PC 保留 SteamVR 和 ViveSimpleInterface talker，不需要把 OpenVR talker 安装到 Control PC。
 
+## Superbuild extension 安装
+
+仓库顶层 `CMakeLists.txt` 是 mc-rtc-superbuild extension 入口。在 Control PC 上应将
+整个仓库克隆到现有 superbuild 的 `extensions/` 目录，不要直接安装到系统目录。
+
+extension 会按以下顺序注册两个项目：
+
+```text
+vr_interface_msgs
+ANAAvatarControllerRHPS1_manual_project
+```
+
+第二个是 superbuild 内部的项目 target 名；安装后在 mc_rtc 配置中选择的
+controller 名仍然是 `ANAAvatarControllerRHPS1_manual`。
+
 独立构建控制器时请在 CMake 配置参数中加入
 `-DINSTALL_DOCUMENTATION=OFF`。源码包不包含生成后的 Doxygen 文档；该参数只关闭文档安装，不影响控制器、状态插件或配置文件。
 
