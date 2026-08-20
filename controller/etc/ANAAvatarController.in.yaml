@@ -1122,6 +1122,42 @@ states:
     - ANA::SharedAutonomyLeftHand
     - ANA::SharedAutonomyRightHand
 
+  # 实体 RHPS1 纯手动版本只创建手、臂、头部任务和 Vive 输入桥。
+  # 不加载物体意图、共享自主、MuJoCo 磁吸或旧 Unity 话题。
+  Avatar::Retargetting::ManualLeft:
+    base: Parallel
+    states:
+    - ANA::LeftHandRetargeting
+    - ANA::LeftArmRetargeting
+    - ANA::LeftRetargeting
+
+  Avatar::Retargetting::ManualRight:
+    base: Parallel
+    states:
+    - ANA::RightHandRetargeting
+    - ANA::RightArmRetargeting
+    - ANA::RightRetargeting
+
+  ANA::ViveHandBridgeManual:
+    base: ANA::ViveHandBridge
+    input_delay: 0.0
+    publish_legacy_unity_topics: false
+    control_mujoco_adhesion: false
+    robot:
+      rhps1:
+        control_mujoco_adhesion: false
+
+  Avatar::Retargetting::Manual:
+    base: Parallel
+    states:
+    - ANA::ROSInputState
+    - ANA::RetargetingReference
+    - Avatar::Retargetting::Head
+    - Avatar::Retargetting::ManualLeft
+    - Avatar::Retargetting::ManualRight
+    # 该状态启动时先把四个 task 固定在机器人当前姿态；双手 menu 确认后才平滑接管。
+    - ANA::ViveHandBridgeManual
+
   ANA::WalkInternal:
     base: Meta
     transitions:
@@ -1142,11 +1178,27 @@ states:
     base: Meta
     transitions:
       # XXX consider adding a "CheckEmergency" state that blocks until the emergency state is released
-      - [Pause, OK, ANA::PrepareRHPS1ForVR, Auto]
-      - [ANA::PrepareRHPS1ForVR, OK, @AVATAR_RETARGETTING_STATE@, Auto]
+@AVATAR_DEMO_FSM_TRANSITIONS@
     configs:
       Pause:
         duration: 2
+
+  # 真机纯手动入口不经过 PrepareRHPS1ForVR，避免使用按 MuJoCo 桌面调出的绝对坐标。
+  ANA::ManualDemoFSM:
+    base: Meta
+    transitions:
+      - [Pause, OK, Avatar::Retargetting::Manual, Auto]
+    configs:
+      Pause:
+        duration: 2
+
+  ANA::ManualDemo:
+    base: Parallel
+    states:
+      # 保持控制模型姿态参考与编码器同步，并保留 RHPS1 双足站立稳定器。
+      - ANA::UpdatePosture
+      - ANA::ManualDemoFSM
+      - ANA::WalkFSM
   # Full FSM for the demo
   ANA::Demo:
     base: Parallel
@@ -1164,7 +1216,7 @@ states:
       @AVATAR_DEMO_WALK_FSM_STATE@
 
 transitions:
-  - [@AVATAR_INITIAL_STATE@, @AVATAR_INITIAL_STATE_OUTPUT@, ANA::Demo]
+  - [@AVATAR_INITIAL_STATE@, @AVATAR_INITIAL_STATE_OUTPUT@, @AVATAR_DEMO_STATE@]
 
 simulation: @SIM_CONF@
 use_emergency_button: false

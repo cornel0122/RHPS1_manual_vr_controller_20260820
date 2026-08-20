@@ -61,12 +61,22 @@ Operator PC 保留 SteamVR 和 ViveSimpleInterface talker，不需要把 OpenVR 
 
 ## 重要安全边界
 
-当前代码可以用于编译、安装、controller 发现和 ROS 2 通信验证，但在实体机器人上开始运动前还需要完成：
+实体机器人必须选择新增的纯手动 controller：
 
-1. 跳过或替换基于 MuJoCo 桌面绝对坐标的 `PrepareRHPS1ForVR`；
-2. 从最小运行 FSM 移除 IntentRecognitionBridge、UI_SharedAutonomy 和左右 SharedAutonomy 状态；
-3. 由 RHPS1 工程师确认肩部 local-minimum posture override；
-4. 确认真机 RobotModule、夹具名称、安装前缀和稳定器配置。
+```text
+ANAAvatarControllerRHPS1_manual
+```
+
+该版本已经跳过 `PrepareRHPS1ForVR`，运行链中也不包含 IntentRecognitionBridge、
+UI_SharedAutonomy 或左右 SharedAutonomy。进入手动状态后，Vive bridge 会保持机器人
+当前手臂姿态，直到左右手柄均通过 `menu` 按键确认，再用 2 秒 handover 平滑接管。
+
+在实体机器人上开始运动前仍需：
+
+1. 由 RHPS1 工程师确认肩部 local-minimum posture override；
+2. 确认真机 RobotModule、夹具名称、安装前缀和 LIPM 稳定器配置；
+3. 确认急停人员、脚底接触和初始站姿；
+4. 先完成 ROS 2 跨电脑输入检查。
 
 未经以上确认，不要在实体机器人上按下 `Start MC Control`。
 

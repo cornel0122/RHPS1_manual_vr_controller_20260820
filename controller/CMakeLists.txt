@@ -54,6 +54,9 @@ set(AVATAR_INITIAL_STATE "LIPMWalking::Initial")
 set(AVATAR_INITIAL_STATE_OUTPUT "Standing")
 set(AVATAR_DEMO_WALK_FSM_STATE "- ANA::WalkFSM")
 set(AVATAR_RETARGETTING_STATE "Avatar::Retargetting")
+set(AVATAR_DEMO_STATE "ANA::Demo")
+set(AVATAR_DEMO_FSM_TRANSITIONS
+    "      - [Pause, OK, ANA::PrepareRHPS1ForVR, Auto]\n      - [ANA::PrepareRHPS1ForVR, OK, ${AVATAR_RETARGETTING_STATE}, Auto]")
 set(AVATAR_EXTRA_CONFIG "")
 set(AVATAR_PLUGINS
     "[footsteps_planner_plugin, ExternalFootstepPlannerPlugin, mocap_plugin, EmergencyButtonPlugin, FingersForceSensorsPlugin]"
@@ -63,9 +66,30 @@ configure_file(etc/ANAAvatarController.in.yaml
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/ANAAvatarControllerRHPS1.yaml"
         DESTINATION "${MC_CONTROLLER_INSTALL_PREFIX}/etc")
 
+# 实体 RHPS1 的纯手动 VR 版本。保留 LIPM 站立稳定器，但不进入仿真中
+# 使用绝对坐标的准备轨迹，也不启动意图识别或共享自主状态。
+set(AVATAR_INITIAL_STATE "LIPMWalking::Initial")
+set(AVATAR_INITIAL_STATE_OUTPUT "Standing")
+set(AVATAR_DEMO_WALK_FSM_STATE "- ANA::WalkFSM")
+set(AVATAR_RETARGETTING_STATE "Avatar::Retargetting::Manual")
+set(AVATAR_DEMO_STATE "ANA::ManualDemo")
+set(AVATAR_DEMO_FSM_TRANSITIONS
+    "      - [Pause, OK, Avatar::Retargetting::Manual, Auto]")
+set(AVATAR_EXTRA_CONFIG "")
+# mocap 插件仅提供旧 retargetting state 需要的兼容 datastore；实际输入来自 Vive bridge。
+# EmergencyButtonPlugin 在该源码包中不是必需依赖；真机急停仍由 RHPS1 硬件安全链负责。
+set(AVATAR_PLUGINS "[mocap_plugin]")
+configure_file(etc/ANAAvatarController.in.yaml
+               "${CMAKE_CURRENT_BINARY_DIR}/etc/ANAAvatarControllerRHPS1_manual.yaml")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/ANAAvatarControllerRHPS1_manual.yaml"
+        DESTINATION "${MC_CONTROLLER_INSTALL_PREFIX}/etc")
+
 set(AVATAR_INITIAL_STATE "Avatar::Initial")
 set(AVATAR_INITIAL_STATE_OUTPUT "OK")
 set(AVATAR_RETARGETTING_STATE "Avatar::Retargetting::HeadPlusLeft")
+set(AVATAR_DEMO_STATE "ANA::Demo")
+set(AVATAR_DEMO_FSM_TRANSITIONS
+    "      - [Pause, OK, ANA::PrepareRHPS1ForVR, Auto]\n      - [ANA::PrepareRHPS1ForVR, OK, ${AVATAR_RETARGETTING_STATE}, Auto]")
 set(AVATAR_DEMO_WALK_FSM_STATE "")
 set(AVATAR_EXTRA_CONFIG "")
 # 工程师版 retargetting state 初始化时仍从 mocap 插件读取采样频率。
@@ -79,7 +103,7 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/ANAAvatarControllerRHPS1_none.yam
         DESTINATION "${MC_CONTROLLER_INSTALL_PREFIX}/etc")
 
 # 本机安装的 ISMPC 接口早于工程师分支；当前融合只构建实际需要的 LIPM 与无行走版本。
-set(VARIANTS lipm none)
+set(VARIANTS lipm manual none)
 set(ROBOTS rhps1 hrp4j hrp4cr hrp4)
 foreach(VARIANT ${VARIANTS})
   if(${VARIANT} STREQUAL "lipm")
