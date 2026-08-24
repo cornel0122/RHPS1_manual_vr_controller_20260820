@@ -9,6 +9,8 @@ controller/
   ANAAvatarControllerRHPS1 源码
 ros2_ws/src/vr_interface_msgs/
   Vive controller/tracker 的 ROS 2 自定义消息
+operator_pc/
+  RHPS1 ZED 图像检查、ZED SDK 转换和 OpenVR HMD overlay
 docs/
   中文安装、运行、风险和迁移记录
 ```
@@ -60,6 +62,12 @@ Control PC 需要构建：
 并且不会自动加载。实际输入仍来自 Operator PC 上的 Vive talker。
 
 Operator PC 保留 SteamVR 和 ViveSimpleInterface talker，不需要把 OpenVR talker 安装到 Control PC。
+
+实体夹具与 Vision PC/ZED 画面接入见：
+
+```text
+docs/RHPS1真机夹具与ZED画面准备_20260824.md
+```
 
 ## Superbuild extension 安装
 

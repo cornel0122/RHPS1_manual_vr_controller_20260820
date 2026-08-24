@@ -225,6 +225,10 @@ private:
   double inputDelay_ = 0.0;
   double openValue_ = 0.7;
   double closedValue_ = 0.05;
+  double gripperSafetyThresholdDeg_ = 8.0;
+  int gripperSafetyIterations_ = 8;
+  double gripperSafetyReleaseDeg_ = 0.0;
+  double gripperSafetyVmaxPercent_ = 0.05;
   double adhesionOpenValue_ = 0.0;
   double adhesionClosedValue_ = 0.01;
   double graspNotificationTriggerThreshold_ = 0.9;
@@ -241,6 +245,7 @@ private:
   double debugHandMappingInterval_ = 1.0;
   double lastHandMappingDebugTime_ = 0.0;
   bool controlGrippers_ = true;
+  bool gripperSafetyEnabled_ = false;
   bool controlMujocoAdhesion_ = true;
   bool controlHandOrientation_ = true;
   bool useVelocityFeedforward_ = true;

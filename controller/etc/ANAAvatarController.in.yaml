@@ -814,10 +814,7 @@ states:
         target:
           translation: [0.2, 0.4, 1.]
           rotation: [0, -1.57, 0]
-        controlPoints:
-        [
-          [-0.2, 0.6, 1.2]
-        ]
+        controlPoints: [[-0.2, 0.6, 1.2]]
 
   ANA::PutRightHandAboveTable:
     base: ANA::PutLeftHandAboveTable
@@ -828,10 +825,7 @@ states:
         target:
           translation: [0.2, -0.4, 1.]
           rotation: [0, -1.57, 0]
-        controlPoints:
-        [
-          [-0.2, -0.6, 1.2]
-        ]
+        controlPoints: [[-0.2, -0.6, 1.2]]
 
   ANA::PutHandsAboveTable:
     base: Parallel
@@ -1143,6 +1137,13 @@ states:
     input_delay: 0.0
     publish_legacy_unity_topics: false
     control_mujoco_adhesion: false
+    # RHPS1 实体夹具：低速闭合，并用命令/编码器位置误差检测接触后停止。
+    gripper_safety_enabled: true
+    gripper_safety:
+      threshold: 8
+      iter: 8
+      release: 0
+      vmaxPercent: 0.05
     robot:
       rhps1:
         control_mujoco_adhesion: false

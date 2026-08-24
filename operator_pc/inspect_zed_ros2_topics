@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$ROOT_DIR/rhps1_ros_env.sh"
+
+echo "ROS domain=$ROS_DOMAIN_ID, RMW=$RMW_IMPLEMENTATION"
+echo "Visible ROS 2 image topics:"
+ros2 topic list -t --no-daemon | grep -E 'sensor_msgs/msg/(Image|CompressedImage)' || true
+
+echo
+echo "Known ZED topic-name candidates:"
+ros2 topic list --no-daemon | grep -Ei 'zed|camera|image|depth' || true

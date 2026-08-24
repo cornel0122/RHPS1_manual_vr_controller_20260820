@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$ROOT_DIR/rhps1_ros_env.sh"
+
+VIVE_ROS_SETUP="${VIVE_ROS_SETUP:-$HOME/luyisi/ViveSimpleInterface-main/ros/install/setup.bash}"
+if [[ ! -f "$VIVE_ROS_SETUP" ]]; then
+  echo "Vive ROS setup not found: $VIVE_ROS_SETUP" >&2
+  echo "Set VIVE_ROS_SETUP to ViveSimpleInterface's install/setup.bash." >&2
+  exit 1
+fi
+source "$VIVE_ROS_SETUP"
+
+echo "RHPS1 Vive: domain=$ROS_DOMAIN_ID, rmw=$RMW_IMPLEMENTATION"
+exec ros2 run vr_interface_node talker "$@"

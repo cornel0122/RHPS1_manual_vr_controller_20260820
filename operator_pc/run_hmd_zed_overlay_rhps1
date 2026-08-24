@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$ROOT_DIR/rhps1_ros_env.sh"
+
+TOPIC="${RHPS1_ZED_RGB_TOPIC:-/rtgr/robot/head_camera/rgb/image_raw}"
+FPS="${HEAD_CAMERA_OVERLAY_FPS:-20}"
+
+echo "RHPS1 HMD image topic: $TOPIC"
+exec python3 "$ROOT_DIR/head_camera_openvr_overlay.py" \
+  --topic "$TOPIC" \
+  --fps "$FPS" \
+  --no-debug-marker \
+  "$@"

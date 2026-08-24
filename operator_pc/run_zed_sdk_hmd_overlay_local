@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TOPIC="${RHPS1_ZED_LOCAL_TOPIC:-/rtgr/local/zed/left/image_raw}"
+STREAM="${RHPS1_ZED_STREAM_ENDPOINT:-127.0.0.1:30000}"
+FPS="${HEAD_CAMERA_OVERLAY_FPS:-20}"
+
+source /opt/ros/humble/setup.bash
+export ROS_DOMAIN_ID="${RHPS1_ZED_LOCAL_DOMAIN_ID:-201}"
+export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+export ROS_LOCALHOST_ONLY=1
+unset ZENOH_SESSION_CONFIG_URI
+
+cleanup()
+{
+  if [[ -n "${PUBLISHER_PID:-}" ]]; then
+    kill "$PUBLISHER_PID" 2>/dev/null || true
+    wait "$PUBLISHER_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT INT TERM
+
+echo "Local ZED stream: $STREAM -> $TOPIC"
+python3 "$ROOT_DIR/zed_stream_ros2_publisher.py" \
+  --stream "$STREAM" \
+  --topic "$TOPIC" \
+  --fps "$FPS" \
+  ${RHPS1_ZED_DESKTOP_PREVIEW:+--preview} &
+PUBLISHER_PID=$!
+
+python3 "$ROOT_DIR/head_camera_openvr_overlay.py" \
+  --topic "$TOPIC" \
+  --fps "$FPS" \
+  --no-debug-marker \
+  "$@"

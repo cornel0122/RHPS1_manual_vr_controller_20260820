@@ -1,6 +1,7 @@
 #include "ViveHandBridge.h"
 
 #include <mc_control/fsm/Controller.h>
+#include <mc_rtc/constants.h>
 #include <mc_rtc/gui.h>
 #include <mc_rtc/gui/Arrow.h>
 #include <mc_rtc/logging.h>
@@ -173,6 +174,17 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
   config("right_robot_hand_frame", rightRobotHandFrame_);
   config("open_value", openValue_);
   config("closed_value", closedValue_);
+  config("gripper_safety_enabled", gripperSafetyEnabled_);
+  if(config.has("gripper_safety"))
+  {
+    const auto safety = config("gripper_safety");
+    safety("threshold", gripperSafetyThresholdDeg_);
+    safety("iter", gripperSafetyIterations_);
+    safety("release", gripperSafetyReleaseDeg_);
+    safety("vmaxPercent", gripperSafetyVmaxPercent_);
+  }
+  gripperSafetyIterations_ = std::max(1, gripperSafetyIterations_);
+  gripperSafetyVmaxPercent_ = std::clamp(gripperSafetyVmaxPercent_, 0.0, 1.0);
   config("adhesion_open_value", adhesionOpenValue_);
   config("adhesion_closed_value", adhesionClosedValue_);
 }
@@ -199,6 +211,30 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
     robotConfig("control_mujoco_adhesion", controlMujocoAdhesion_);
     robotConfig("open_value", openValue_);
     robotConfig("closed_value", closedValue_);
+  }
+
+  if(controlGrippers_ && gripperSafetyEnabled_)
+  {
+    auto applyGripperSafety = [&](const std::string & gripperName, const std::string & side) {
+      if(!ctl.robot().hasGripper(gripperName))
+      {
+        mc_rtc::log::warning(
+            "[{}] {} gripper '{}' is not registered; skipping manual gripper safety configuration",
+            name(), side, gripperName);
+        return;
+      }
+      auto & gripper = ctl.robot().gripper(gripperName);
+      gripper.actualCommandDiffTrigger(mc_rtc::constants::toRad(gripperSafetyThresholdDeg_));
+      gripper.overCommandLimitIterN(static_cast<unsigned int>(gripperSafetyIterations_));
+      gripper.releaseSafetyOffset(mc_rtc::constants::toRad(gripperSafetyReleaseDeg_));
+      gripper.percentVMAX(gripperSafetyVmaxPercent_);
+      mc_rtc::log::info(
+          "[{}] {} gripper safety: threshold={:.1f}deg, iter={}, release={:.1f}deg, vmax={:.1f}%",
+          name(), side, gripperSafetyThresholdDeg_, gripperSafetyIterations_, gripperSafetyReleaseDeg_,
+          100.0 * gripperSafetyVmaxPercent_);
+    };
+    applyGripperSafety(leftGripper_, "left");
+    applyGripperSafety(rightGripper_, "right");
   }
 
   mc_rtc::log::info("[{}] ViveHandBridge loaded: neutral_body_calibration={}, wrist_pivot_compensation={}, "
