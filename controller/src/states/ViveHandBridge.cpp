@@ -388,6 +388,10 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
       mc_rtc::gui::Label("Initial right reset", [this]() { return initialRightResetSeen_; }),
       mc_rtc::gui::Label("Left data", [this]() { return left_.hasData; }),
       mc_rtc::gui::Label("Right data", [this]() { return right_.hasData; }),
+      mc_rtc::gui::Label("Left menu raw", [this]() { return left_.rawResetButton; }),
+      mc_rtc::gui::Label("Right menu raw", [this]() { return right_.rawResetButton; }),
+      mc_rtc::gui::Label("Left menu press count", [this]() { return std::to_string(left_.resetPressCount); }),
+      mc_rtc::gui::Label("Right menu press count", [this]() { return std::to_string(right_.resetPressCount); }),
       mc_rtc::gui::Label("Left zeroed", [this]() { return left_.zeroed; }),
       mc_rtc::gui::Label("Right zeroed", [this]() { return right_.zeroed; }),
       mc_rtc::gui::Label("Left arm tracker", [this]() { return leftArm_.hasData; }),
@@ -450,8 +454,12 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
 
   const bool leftReset = resetPressed(left_);
   const bool rightReset = resetPressed(right_);
-  const bool leftResetRising = leftReset && !left_.previousResetButton;
-  const bool rightResetRising = rightReset && !right_.previousResetButton;
+  // ROS may deliver both the press and release during one spin_some(). Consume the
+  // callback-level latch so that a short menu press cannot disappear between cycles.
+  const bool leftResetRising = left_.resetPressPending || (leftReset && !left_.previousResetButton);
+  const bool rightResetRising = right_.resetPressPending || (rightReset && !right_.previousResetButton);
+  left_.resetPressPending = false;
+  right_.resetPressPending = false;
 
   if(requireInitialTwoHandReset_ && !trackingStarted_)
   {
@@ -567,7 +575,9 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
     return true;
   }
 
-  if(leftReset && rightReset && (leftResetRising || rightResetRising))
+  const bool leftResetActive = leftReset || leftResetRising;
+  const bool rightResetActive = rightReset || rightResetRising;
+  if(leftResetActive && rightResetActive && (leftResetRising || rightResetRising))
   {
     if(directWaistControl_)
     {
@@ -810,6 +820,13 @@ double ViveHandBridge::now() const
 void ViveHandBridge::pushSample(HandState & state, const Controller & msg)
 {
   const double sampleTime = now();
+  state.rawResetButton = msg.menu_button;
+  if(msg.menu_button && !state.previousReceivedResetButton)
+  {
+    state.resetPressPending = true;
+    ++state.resetPressCount;
+  }
+  state.previousReceivedResetButton = msg.menu_button;
   state.history.push_back({sampleTime, msg});
   if(inputDelay_ <= 0.0)
   {

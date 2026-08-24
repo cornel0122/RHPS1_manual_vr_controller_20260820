@@ -11,6 +11,7 @@
 #include <vr_interface_msgs/msg/controller.hpp>
 #include <vr_interface_msgs/msg/tracker.hpp>
 
+#include <cstdint>
 #include <deque>
 #include <memory>
 #include <string>
@@ -64,6 +65,10 @@ private:
     double latestSampleTime = 0.0;
     bool hasData = false;
     bool zeroed = false;
+    bool rawResetButton = false;
+    bool previousReceivedResetButton = false;
+    bool resetPressPending = false;
+    uint64_t resetPressCount = 0;
     bool previousResetButton = false;
     bool previousGripperButton = false;
     bool previousGraspNotificationButton = false;
