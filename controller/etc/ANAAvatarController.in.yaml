@@ -1183,6 +1183,14 @@ states:
       Pause:
         duration: 2
 
+  # RHPS1 已在 Start MC Control 前通过硬件流程进入 half-sitting 并完成传感器校准。
+  # 保留该实测姿态并自动完成 walking controller 初始化，避免再次追逐内部
+  # half-sitting posture 导致 LIPMWalking::Initial 长时间无法结束。
+  ANA::ManualInitial:
+    base: LIPMWalking::Initial
+    autoplay: true
+    resetPosture: false
+
   # 真机纯手动入口不经过 PrepareRHPS1ForVR，避免使用按 MuJoCo 桌面调出的绝对坐标。
   ANA::ManualDemoFSM:
     base: Meta

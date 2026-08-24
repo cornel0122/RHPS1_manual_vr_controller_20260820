@@ -50,7 +50,10 @@ else()
   set(SIM_CONF "false")
 endif()
 
-set(AVATAR_INITIAL_STATE "LIPMWalking::Initial")
+# RHPS1 hardware is already brought to half-sitting and calibrated before
+# Start MC Control. Keep that measured posture instead of asking the walking
+# controller to drive to its own half-sitting target a second time.
+set(AVATAR_INITIAL_STATE "ANA::ManualInitial")
 set(AVATAR_INITIAL_STATE_OUTPUT "Standing")
 set(AVATAR_DEMO_WALK_FSM_STATE "- ANA::WalkFSM")
 set(AVATAR_RETARGETTING_STATE "Avatar::Retargetting")
