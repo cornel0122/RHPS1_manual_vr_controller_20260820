@@ -73,6 +73,7 @@ private:
     bool previousGripperButton = false;
     bool previousGraspNotificationButton = false;
     bool gripperClosed = false;
+    bool gripperCommandActive = false;
     Eigen::Vector3d zeroVive = Eigen::Vector3d::Zero();
     Eigen::Matrix3d zeroRotation = Eigen::Matrix3d::Identity();
     sva::PTransformd zeroRobot = sva::PTransformd::Identity();

@@ -224,6 +224,20 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
         return;
       }
       auto & gripper = ctl.robot().gripper(gripperName);
+      if(gripper.activeJoints().empty())
+      {
+        mc_rtc::log::error(
+            "[{}] {} gripper '{}' has no active joints; Vive grip commands cannot move it",
+            name(), side, gripperName);
+        return;
+      }
+      if(!gripper.hasActiveJoint(side == "left" ? leftGripperJoint_ : rightGripperJoint_))
+      {
+        mc_rtc::log::warning(
+            "[{}] {} gripper '{}' does not contain configured active joint '{}'; "
+            "whole-gripper commands will control all RobotModule active joints instead",
+            name(), side, gripperName, side == "left" ? leftGripperJoint_ : rightGripperJoint_);
+      }
       gripper.actualCommandDiffTrigger(mc_rtc::constants::toRad(gripperSafetyThresholdDeg_));
       gripper.overCommandLimitIterN(static_cast<unsigned int>(gripperSafetyIterations_));
       gripper.releaseSafetyOffset(mc_rtc::constants::toRad(gripperSafetyReleaseDeg_));
@@ -661,12 +675,14 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
   const bool rightGripper = gripperPressed(right_);
   if(!leftReset && leftGripper && !left_.previousGripperButton)
   {
+    left_.gripperCommandActive = true;
     left_.gripperClosed = !left_.gripperClosed;
     mc_rtc::log::info("[{}] Left gripper {}", name(), left_.gripperClosed ? "closed" : "open");
     publishGraspEvent("left", left_.gripperClosed ? "gripper_closed" : "gripper_opened", left_.latest.trigger);
   }
   if(!rightReset && rightGripper && !right_.previousGripperButton)
   {
+    right_.gripperCommandActive = true;
     right_.gripperClosed = !right_.gripperClosed;
     mc_rtc::log::info("[{}] Right gripper {}", name(), right_.gripperClosed ? "closed" : "open");
     publishGraspEvent("right", right_.gripperClosed ? "gripper_closed" : "gripper_opened", right_.latest.trigger);
@@ -1842,21 +1858,19 @@ void ViveHandBridge::updateGrippers(mc_control::fsm::Controller & ctl)
   {
     return;
   }
-  // 夹具目标开合度由手柄按钮切换，机器人专用 joint 在 start 中选择。
-  auto update = [&](const HandState & hand, const std::string & gripperName, const std::string & jointName) {
-    if(!hand.hasData || !ctl.robot().hasGripper(gripperName))
+  // 第一次 grip 上升沿之前不发送任何夹具目标，避免 controller 启动时夹具自行张开。
+  // 使用整夹具 opening 接口，让 RobotModule 决定所有主动/从动关节的正确联动。
+  auto update = [&](const HandState & hand, const std::string & gripperName) {
+    if(!hand.hasData || !hand.gripperCommandActive || !ctl.robot().hasGripper(gripperName))
     {
       return;
     }
     auto & gripper = ctl.robot().gripper(gripperName);
     const double opening = hand.gripperClosed ? closedValue_ : openValue_;
-    if(gripper.hasActiveJoint(jointName))
-    {
-      gripper.setTargetOpening(jointName, opening);
-    }
+    gripper.setTargetOpening(opening);
   };
-  update(left_, leftGripper_, leftGripperJoint_);
-  update(right_, rightGripper_, rightGripperJoint_);
+  update(left_, leftGripper_);
+  update(right_, rightGripper_);
 }
 
 void ViveHandBridge::publishAdhesionCommand()
