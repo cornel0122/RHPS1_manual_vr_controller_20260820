@@ -113,6 +113,11 @@ private:
   void onTracker(TrackerState & tracker, const Tracker::SharedPtr msg);
   void onAnyController(const std::string & topic, const Controller::SharedPtr msg);
   void onAnyTracker(const std::string & topic, const Tracker::SharedPtr msg);
+  void onExperimentCommand(const std_msgs::msg::String::SharedPtr msg);
+  void applyPendingExperimentCommand(mc_control::fsm::Controller & ctl);
+  void holdAndRearmTracking();
+  void clearInputHistories();
+  std::string experimentConditionName(int condition) const;
   void updateDelayedInputs();
   double now() const;
   void pushSample(HandState & state, const Controller & msg);
@@ -190,6 +195,7 @@ private:
   std::vector<rclcpp::Subscription<Tracker>::SharedPtr> trackerSubs_;
   rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr adhesionPub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr graspEventPub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr experimentCommandSub_;
 
   std::string leftTaskName_ = "ANA::LeftHandRetargetingTask";
   std::string rightTaskName_ = "ANA::RightHandRetargetingTask";
@@ -224,6 +230,25 @@ private:
   double maxStep_ = 0.35;
   double directWaistMaxDistance_ = 1.2;
   double inputDelay_ = 0.0;
+  bool experimentConditionEnabled_ = false;
+  bool experimentConditionRequired_ = false;
+  bool experimentRearmOnCommand_ = true;
+  bool experimentConditionReceived_ = false;
+  bool experimentAssistanceEnabled_ = false;
+  bool pendingExperimentCommand_ = false;
+  int experimentCondition_ = 0;
+  int pendingExperimentCondition_ = 0;
+  double experimentDelayedInputSeconds_ = 1.5;
+  std::string experimentCommandTopic_ = "/ana/experiment_condition";
+  std::string experimentSessionId_ = "none";
+  std::string pendingExperimentSessionId_ = "none";
+  std::string experimentConditionName_ = "not configured";
+  std::string experimentConditionKey_ = "ANA::Experiment::condition";
+  std::string experimentConditionNameKey_ = "ANA::Experiment::condition_name";
+  std::string experimentSessionKey_ = "ANA::Experiment::session_id";
+  std::string experimentAssistanceKey_ = "ANA::Experiment::assistance_enabled";
+  std::string experimentDelayKey_ = "ANA::Experiment::input_delay";
+  std::string experimentConditionReadyKey_ = "ANA::Experiment::condition_received";
   double openValue_ = 0.7;
   double closedValue_ = 0.05;
   double gripperSafetyThresholdDeg_ = 8.0;

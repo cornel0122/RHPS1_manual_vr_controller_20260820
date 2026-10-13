@@ -9,6 +9,8 @@
 void SharedAutonomy::configure(const mc_rtc::Configuration & config)
 {
   config("enabled", enabled_);
+  config("use_experiment_assistance_gate", useExperimentAssistanceGate_);
+  config("experiment_assistance_key", experimentAssistanceKey_);
   config("overwritten_Task", overwritten_Task);
   config("translationStiffness", stiffness_);
   config("orientationStiffness", stiffnessOrientationTask_);
@@ -61,6 +63,7 @@ void SharedAutonomy::addExperimentLogs(mc_control::fsm::Controller & ctl)
 {
   const std::string prefix = name() + "_experiment_";
   ctl.logger().addLogEntry(prefix + "configured-enabled", this, [this]() { return enabled_; });
+  ctl.logger().addLogEntry(prefix + "experiment-gate-open", this, [this]() { return experimentGateOpen_; });
   ctl.logger().addLogEntry(prefix + "data-ready", this, [this]() { return dataReady_; });
   ctl.logger().addLogEntry(prefix + "selected-for-assistance", this, [this]() { return selectedForAssistance_; });
   ctl.logger().addLogEntry(prefix + "assistance-requested", this, [this]() { return assistanceRequested_; });
@@ -253,6 +256,22 @@ void SharedAutonomy::start(mc_control::fsm::Controller & ctl)
 
 bool SharedAutonomy::run(mc_control::fsm::Controller & ctl)
 {
+  experimentGateOpen_ = !useExperimentAssistanceGate_
+                        || (ctl.datastore().has(experimentAssistanceKey_)
+                            && ctl.datastore().get<bool>(experimentAssistanceKey_));
+  if(!experimentGateOpen_)
+  {
+    fallbackToManualRetargetting(ctl);
+    dataReady_ = false;
+    selectedForAssistance_ = false;
+    assistanceRequested_ = false;
+    currentGoalNameLog_ = "none";
+    targetDistance_ = 0.0;
+    updateAssistanceMetrics(ctl, false, false, false, 0.0);
+    output("OK");
+    return true;
+  }
+
   // intent/goal 层还没有启动时，共享自主保持打开但不介入，避免影响基础遥操作。
   dataReady_ = sharedAutonomyDataReady(ctl);
   if(!dataReady_)
@@ -396,8 +415,11 @@ bool SharedAutonomy::run(mc_control::fsm::Controller & ctl)
   selectedForAssistance_ = type_.compare(handToChoose) == 0;
   // 原版由 ROS/Unity retargetting 的 active 状态放行；Vive 桥直接写 task，旧状态不会变为 true。
   // 保留原条件，同时用 Vive 的双手启动确认作为 ROS2 直连链路的放行条件。
-  const std::string viveTrackingKey = "ANA::ViveHandBridge::tracking_started";
-  const bool legacyRetargettingActive = ctl.datastore().call<bool>(arm_Task);
+  const std::string viveTrackingKey = ctl.datastore().has("ANA::Vive::tracking_started")
+                                          ? "ANA::Vive::tracking_started"
+                                          : "ANA::ViveHandBridge::tracking_started";
+  const bool legacyRetargettingActive = ctl.datastore().has(arm_Task)
+                                        && ctl.datastore().call<bool>(arm_Task);
   const bool viveTrackingStarted = ctl.datastore().has(viveTrackingKey)
                                    && ctl.datastore().call<bool>(viveTrackingKey);
   const bool armActive = selectedForAssistance_ && alpha > 0.0

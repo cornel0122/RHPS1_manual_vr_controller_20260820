@@ -87,6 +87,24 @@ configure_file(etc/ANAAvatarController.in.yaml
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/ANAAvatarControllerRHPS1_manual.yaml"
         DESTINATION "${MC_CONTROLLER_INSTALL_PREFIX}/etc")
 
+# 实体 RHPS1 的四条件实验版本。Control PC 始终加载这一套 controller；
+# Operator PC 通过 ROS 2 在运行时选择 0/1.5 秒延迟和辅助开/关。
+set(AVATAR_INITIAL_STATE "ANA::ManualInitial")
+set(AVATAR_INITIAL_STATE_OUTPUT "Standing")
+set(AVATAR_DEMO_WALK_FSM_STATE "- ANA::WalkFSM")
+set(AVATAR_RETARGETTING_STATE "Avatar::Retargetting::Experiment")
+set(AVATAR_DEMO_STATE "ANA::ExperimentDemo")
+set(AVATAR_DEMO_FSM_TRANSITIONS
+    "      - [Pause, OK, Avatar::Retargetting::Experiment, Auto]")
+set(AVATAR_EXTRA_CONFIG "")
+# Experiment input comes exclusively from ViveHandBridge. The legacy retargetting
+# states only create the hand/arm tasks and no longer need a live mocap plugin.
+set(AVATAR_PLUGINS "[]")
+configure_file(etc/ANAAvatarController.in.yaml
+               "${CMAKE_CURRENT_BINARY_DIR}/etc/ANAAvatarControllerRHPS1_experiment.yaml")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/ANAAvatarControllerRHPS1_experiment.yaml"
+        DESTINATION "${MC_CONTROLLER_INSTALL_PREFIX}/etc")
+
 set(AVATAR_INITIAL_STATE "Avatar::Initial")
 set(AVATAR_INITIAL_STATE_OUTPUT "OK")
 set(AVATAR_RETARGETTING_STATE "Avatar::Retargetting::HeadPlusLeft")
@@ -106,7 +124,7 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/ANAAvatarControllerRHPS1_none.yam
         DESTINATION "${MC_CONTROLLER_INSTALL_PREFIX}/etc")
 
 # 本机安装的 ISMPC 接口早于工程师分支；当前融合只构建实际需要的 LIPM 与无行走版本。
-set(VARIANTS lipm manual none)
+set(VARIANTS lipm manual experiment none)
 set(ROBOTS rhps1 hrp4j hrp4cr hrp4)
 foreach(VARIANT ${VARIANTS})
   if(${VARIANT} STREQUAL "lipm")

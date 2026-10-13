@@ -42,8 +42,6 @@ void OrientationRetargetting::start(mc_control::fsm::Controller & ctl)
   rConfig("activeJoints", activeJoints_);
   rConfig("body_frame_relative_pose", X_body_frame);
 
-  auto & mocap_freq_func = ctl.datastore().get<std::function<int(void)>>("mocap_plugin::get_data_frequency");
-
   int part = 0;
   config_("mocap_end_eff_num", part);
   std::cout << name() << " End eff num " << part << std::endl;
@@ -272,7 +270,6 @@ void OrientationRetargetting::teardown(mc_control::fsm::Controller & ctl)
 void OrientationRetargetting::createGUI(mc_control::fsm::Controller & ctl)
 {
   auto & gui = *ctl.gui();
-  auto & mocap_online = ctl.datastore().get<bool>("mocap_plugin::online");
 
   gui.addElement(this, {"Avatar", name()},
                  mc_rtc::gui::Label(name() + "Data Online", [this]() -> const bool & { return data_online_; }));

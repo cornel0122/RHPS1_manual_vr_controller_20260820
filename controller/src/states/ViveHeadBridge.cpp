@@ -4,6 +4,9 @@
 #include <mc_rtc/gui.h>
 #include <mc_rtc/logging.h>
 
+#include <algorithm>
+#include <cmath>
+
 void ViveHeadBridge::configure(const mc_rtc::Configuration & config)
 {
   config("topic", topic_);
@@ -13,6 +16,10 @@ void ViveHeadBridge::configure(const mc_rtc::Configuration & config)
   config("require_external_zero", requireExternalZero_);
   config("head_rotation_axis_mode", headRotationAxisMode_);
   config("head_pitch_gain", headPitchGain_);
+  config("use_experiment_delay", useExperimentDelay_);
+  config("experiment_delay_key", experimentDelayKey_);
+  config("experiment_session_key", experimentSessionKey_);
+  config("experiment_condition_ready_key", experimentConditionReadyKey_);
 }
 
 void ViveHeadBridge::start(mc_control::fsm::Controller & ctl)
@@ -32,6 +39,7 @@ void ViveHeadBridge::start(mc_control::fsm::Controller & ctl)
   if(ctl.datastore().has(taskName_))
   {
     task_ = ctl.datastore().get<std::shared_ptr<mc_tasks::TransformTask>>(taskName_);
+    zeroRobot_ = task_->target();
   }
   else
   {
@@ -44,6 +52,10 @@ void ViveHeadBridge::start(mc_control::fsm::Controller & ctl)
                                               [this]() { enable_ = !enable_; }),
                         mc_rtc::gui::Label("HMD data", [this]() { return hasData_; }),
                         mc_rtc::gui::Label("HMD zeroed", [this]() { return zeroed_; }),
+                        mc_rtc::gui::Label("HMD input delay [s]", [this]() { return inputDelay_; }),
+                        mc_rtc::gui::Label("HMD experiment session", [this]() -> const std::string & {
+                          return experimentSessionId_;
+                        }),
                         mc_rtc::gui::Label("Require external head zero", [this]() { return requireExternalZero_; }));
 
   if(!ctl.datastore().has(zeroRequestKey_))
@@ -56,11 +68,17 @@ void ViveHeadBridge::start(mc_control::fsm::Controller & ctl)
   mc_rtc::log::success("[{}] Subscribed to {}", name(), topic_);
   mc_rtc::log::info("[{}] Head rotation axis mode: {}", name(), headRotationAxisMode_);
   mc_rtc::log::info("[{}] Head pitch gain: {}", name(), headPitchGain_);
+  ctl.logger().addLogEntry(name() + "_experiment_input-delay-s", this, [this]() { return inputDelay_; });
+  ctl.logger().addLogEntry(name() + "_experiment_session-id", this, [this]() -> const std::string & {
+    return experimentSessionId_;
+  });
 }
 
 bool ViveHeadBridge::run(mc_control::fsm::Controller & ctl)
 {
+  syncExperimentInput(ctl);
   rclcpp::spin_some(node_);
+  selectDelayedHmd();
 
   if(ctl.datastore().has(zeroRequestKey_))
   {
@@ -84,6 +102,8 @@ bool ViveHeadBridge::run(mc_control::fsm::Controller & ctl)
     if(requireExternalZero_)
     {
       // 启动阶段等待 ViveHandBridge 的双手确认复位，避免 HMD 第一帧姿态被自动拿来当零点。
+      task_->target(zeroRobot_);
+      task_->refVelB(sva::MotionVecd::Zero());
       output("OK");
       return true;
     }
@@ -137,8 +157,115 @@ void ViveHeadBridge::teardown(mc_control::fsm::Controller & ctl)
 
 void ViveHeadBridge::onHmd(const Tracker::SharedPtr msg)
 {
-  latest_ = *msg;
-  hasData_ = msg->pose_is_valid;
+  if(useExperimentDelay_)
+  {
+    history_.push_back({now(), *msg});
+  }
+  else
+  {
+    latest_ = *msg;
+    hasData_ = msg->pose_is_valid;
+  }
+}
+
+void ViveHeadBridge::syncExperimentInput(mc_control::fsm::Controller & ctl)
+{
+  if(!useExperimentDelay_)
+  {
+    return;
+  }
+
+  experimentConditionReady_ = ctl.datastore().has(experimentConditionReadyKey_)
+                              && ctl.datastore().get<bool>(experimentConditionReadyKey_);
+  if(!experimentConditionReady_)
+  {
+    hasData_ = false;
+    return;
+  }
+
+  const double requestedDelay = ctl.datastore().has(experimentDelayKey_)
+                                    ? std::max(0.0, ctl.datastore().get<double>(experimentDelayKey_))
+                                    : 0.0;
+  const std::string requestedSession = ctl.datastore().has(experimentSessionKey_)
+                                           ? ctl.datastore().get<std::string>(experimentSessionKey_)
+                                           : "unknown";
+  const bool newSession = requestedSession != experimentSessionId_;
+  const bool delayChanged = std::abs(requestedDelay - inputDelay_) > 1e-9;
+  if(!newSession && !delayChanged)
+  {
+    return;
+  }
+
+  inputDelay_ = requestedDelay;
+  experimentSessionId_ = requestedSession;
+  history_.clear();
+  hasData_ = false;
+
+  if(newSession)
+  {
+    // A new hand-control session must also re-arm the head. Keep the current
+    // robot target until the two menu confirmations request a fresh HMD zero.
+    zeroed_ = false;
+    if(task_)
+    {
+      zeroRobot_ = task_->target();
+      task_->target(zeroRobot_);
+      task_->refVelB(sva::MotionVecd::Zero());
+    }
+    if(ctl.datastore().has(zeroRequestKey_))
+    {
+      ctl.datastore().get<bool>(zeroRequestKey_) = false;
+    }
+  }
+
+  mc_rtc::log::info("[{}] Experiment session {}: HMD rotation delay={:.1f}s; waiting for fresh HMD samples",
+                    name(), experimentSessionId_, inputDelay_);
+}
+
+void ViveHeadBridge::selectDelayedHmd()
+{
+  if(!useExperimentDelay_ || !experimentConditionReady_ || history_.empty())
+  {
+    return;
+  }
+
+  if(inputDelay_ <= 0.0)
+  {
+    latest_ = history_.back().msg;
+    hasData_ = latest_.pose_is_valid;
+    while(history_.size() > 1)
+    {
+      history_.pop_front();
+    }
+    return;
+  }
+
+  const double targetTime = now() - inputDelay_;
+  while(history_.size() > 1 && history_[1].time <= targetTime)
+  {
+    history_.pop_front();
+  }
+
+  if(history_.front().time <= targetTime)
+  {
+    latest_ = history_.front().msg;
+    hasData_ = latest_.pose_is_valid;
+  }
+  else
+  {
+    hasData_ = false;
+  }
+
+  const double oldestUseful = now() - (inputDelay_ + 2.0);
+  while(history_.size() > 1 && history_.front().time < oldestUseful)
+  {
+    history_.pop_front();
+  }
+}
+
+double ViveHeadBridge::now() const
+{
+  return node_ ? node_->now().seconds() : 0.0;
 }
 
 Eigen::Matrix3d ViveHeadBridge::viveRotation(const Tracker & msg) const

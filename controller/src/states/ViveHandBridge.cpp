@@ -116,6 +116,12 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
   config("max_step", maxStep_);
   config("direct_waist_max_distance", directWaistMaxDistance_);
   config("input_delay", inputDelay_);
+  config("experiment_condition_enabled", experimentConditionEnabled_);
+  config("experiment_condition_required", experimentConditionRequired_);
+  config("experiment_rearm_on_command", experimentRearmOnCommand_);
+  config("experiment_condition_topic", experimentCommandTopic_);
+  config("experiment_delayed_input_seconds", experimentDelayedInputSeconds_);
+  experimentDelayedInputSeconds_ = std::max(0.0, experimentDelayedInputSeconds_);
   config("auto_zero", autoZero_);
   config("require_initial_two_hand_reset", requireInitialTwoHandReset_);
   config("initial_zero_requires_arm_trackers", initialZeroRequiresArmTrackers_);
@@ -193,6 +199,17 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
 {
   // 共享自主通过这个只读状态判断 Vive 是否已经完成双手确认并开始控制。
   ctl.datastore().make_call(name() + "::tracking_started", [this]() -> bool { return trackingStarted_; });
+  ctl.datastore().make_call("ANA::Vive::tracking_started", [this]() -> bool { return trackingStarted_; });
+
+  if(experimentConditionEnabled_)
+  {
+    ctl.datastore().make<int>(experimentConditionKey_, experimentCondition_);
+    ctl.datastore().make<std::string>(experimentConditionNameKey_, experimentConditionName_);
+    ctl.datastore().make<std::string>(experimentSessionKey_, experimentSessionId_);
+    ctl.datastore().make<bool>(experimentAssistanceKey_, false);
+    ctl.datastore().make<double>(experimentDelayKey_, inputDelay_);
+    ctl.datastore().make<bool>(experimentConditionReadyKey_, false);
+  }
 
   // 机器人相关的 frame、夹具和人体相对偏移在启动时按当前 RobotModule 覆盖。
   // 这样 HRP4CR 与 RHPS1 可以共用 Vive 设备校准，同时保留各自的机器人参数。
@@ -282,6 +299,14 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
 
   node_ = std::make_shared<rclcpp::Node>("ana_vive_hand_bridge");
   graspEventPub_ = node_->create_publisher<std_msgs::msg::String>(graspEventTopic_, 10);
+  if(experimentConditionEnabled_)
+  {
+    auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
+    experimentCommandSub_ = node_->create_subscription<std_msgs::msg::String>(
+        experimentCommandTopic_, qos,
+        [this](const std_msgs::msg::String::SharedPtr msg) { onExperimentCommand(msg); });
+    mc_rtc::log::info("[{}] Waiting for experiment condition 1-4 on {}", name(), experimentCommandTopic_);
+  }
   if(controlMujocoAdhesion_)
   {
     // 磁力抓取只发送左右夹具的吸附强度，真正写入 MuJoCo actuator 的部分放在 mc_mujoco 里。
@@ -434,6 +459,14 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
       this, {"Avatar", "Vive"},
       mc_rtc::gui::Button("Set hand zero", [this, &ctl]() { setZero(ctl); }),
       mc_rtc::gui::Label("Tracking started", [this]() { return trackingStarted_; }),
+      mc_rtc::gui::Label("Experiment condition received", [this]() { return experimentConditionReceived_; }),
+      mc_rtc::gui::Label("Experiment condition", [this]() -> const std::string & {
+        return experimentConditionName_;
+      }),
+      mc_rtc::gui::Label("Experiment session", [this]() -> const std::string & {
+        return experimentSessionId_;
+      }),
+      mc_rtc::gui::Label("Experiment assistance enabled", [this]() { return experimentAssistanceEnabled_; }),
       mc_rtc::gui::Label("Initial left reset", [this]() { return initialLeftResetSeen_; }),
       mc_rtc::gui::Label("Initial right reset", [this]() { return initialRightResetSeen_; }),
       mc_rtc::gui::Label("Left data", [this]() { return left_.hasData; }),
@@ -481,6 +514,20 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
   ctl.logger().addLogEntry(
       experimentLogPrefix + "tracking-started", this, [this]() { return trackingStarted_; });
   ctl.logger().addLogEntry(
+      experimentLogPrefix + "condition-received", this, [this]() { return experimentConditionReceived_; });
+  ctl.logger().addLogEntry(
+      experimentLogPrefix + "condition", this, [this]() { return experimentCondition_; });
+  ctl.logger().addLogEntry(
+      experimentLogPrefix + "condition-name", this, [this]() -> const std::string & {
+        return experimentConditionName_;
+      });
+  ctl.logger().addLogEntry(
+      experimentLogPrefix + "session-id", this, [this]() -> const std::string & {
+        return experimentSessionId_;
+      });
+  ctl.logger().addLogEntry(
+      experimentLogPrefix + "assistance-enabled", this, [this]() { return experimentAssistanceEnabled_; });
+  ctl.logger().addLogEntry(
       experimentLogPrefix + "linear-velocity-feedforward", this,
       [this]() { return useLinearVelocityFeedforward_; });
   ctl.logger().addLogEntry(
@@ -500,6 +547,7 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
 bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
 {
   rclcpp::spin_some(node_);
+  applyPendingExperimentCommand(ctl);
   updateDelayedInputs();
 
   const bool leftReset = resetPressed(left_);
@@ -526,12 +574,13 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
     left_.previousResetButton = leftReset;
     right_.previousResetButton = rightReset;
 
+    const bool experimentReady = !experimentConditionRequired_ || experimentConditionReceived_;
     const bool zeroReferenceReady = !useWaistReference_ || waist_.hasData;
     const bool armsReady = !initialZeroRequiresArmTrackers_ || (leftArm_.hasData && rightArm_.hasData);
     const bool handsReady = left_.hasData && right_.hasData && left_.task && right_.task;
     if(initialLeftResetSeen_ && initialRightResetSeen_)
     {
-      if(zeroReferenceReady && armsReady && handsReady)
+      if(experimentReady && zeroReferenceReady && armsReady && handsReady)
       {
         if(directWaistControl_)
         {
@@ -591,8 +640,9 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
       {
         initialWaitingForDataLogged_ = true;
         mc_rtc::log::warning("[{}] Initial reset buttons confirmed, waiting for data before zeroing: "
-                             "hands={}, waist={}, arms={}",
+                             "condition={}, hands={}, waist={}, arms={}",
                              name(),
+                             experimentReady,
                              handsReady,
                              zeroReferenceReady,
                              armsReady);
@@ -741,6 +791,22 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
 void ViveHandBridge::teardown(mc_control::fsm::Controller & ctl)
 {
   ctl.datastore().remove(name() + "::tracking_started");
+  if(ctl.datastore().has("ANA::Vive::tracking_started"))
+  {
+    ctl.datastore().remove("ANA::Vive::tracking_started");
+  }
+  if(experimentConditionEnabled_)
+  {
+    const std::vector<std::string> keys = {experimentConditionKey_, experimentConditionNameKey_, experimentSessionKey_,
+                                           experimentAssistanceKey_, experimentDelayKey_, experimentConditionReadyKey_};
+    for(const auto & key : keys)
+    {
+      if(ctl.datastore().has(key))
+      {
+        ctl.datastore().remove(key);
+      }
+    }
+  }
   ctl.gui()->removeElements(this);
   ctl.logger().removeLogEntries(this);
   for(const auto & entry : velocityValidationLogEntries_)
@@ -757,6 +823,7 @@ void ViveHandBridge::teardown(mc_control::fsm::Controller & ctl)
   trackerSubs_.clear();
   adhesionPub_.reset();
   graspEventPub_.reset();
+  experimentCommandSub_.reset();
   node_.reset();
   if(ownsRclcpp_)
   {
@@ -847,6 +914,168 @@ void ViveHandBridge::onAnyTracker(const std::string & topic, const Tracker::Shar
   if(topic == rightArm_.topic)
   {
     onTracker(rightArm_, msg);
+  }
+}
+
+void ViveHandBridge::onExperimentCommand(const std_msgs::msg::String::SharedPtr msg)
+{
+  const std::string & command = msg->data;
+  const auto separator = command.find(':');
+  const std::string conditionText = command.substr(0, separator);
+
+  int condition = 0;
+  try
+  {
+    condition = std::stoi(conditionText);
+  }
+  catch(const std::exception &)
+  {
+    mc_rtc::log::warning("[{}] Ignoring invalid experiment command '{}'", name(), command);
+    return;
+  }
+
+  if(condition < 1 || condition > 4)
+  {
+    mc_rtc::log::warning("[{}] Experiment condition must be 1, 2, 3 or 4; received '{}'", name(), command);
+    return;
+  }
+
+  const std::string session = separator == std::string::npos || separator + 1 >= command.size()
+                                  ? "condition-" + std::to_string(condition)
+                                  : command.substr(separator + 1);
+  if(experimentConditionReceived_ && condition == experimentCondition_ && session == experimentSessionId_)
+  {
+    return;
+  }
+  if(pendingExperimentCommand_ && condition == pendingExperimentCondition_ && session == pendingExperimentSessionId_)
+  {
+    return;
+  }
+
+  pendingExperimentCondition_ = condition;
+  pendingExperimentSessionId_ = session;
+  pendingExperimentCommand_ = true;
+}
+
+void ViveHandBridge::applyPendingExperimentCommand(mc_control::fsm::Controller & ctl)
+{
+  if(!experimentConditionEnabled_ || !pendingExperimentCommand_)
+  {
+    return;
+  }
+
+  const bool replacingActiveSession = experimentConditionReceived_ && trackingStarted_;
+  if(experimentRearmOnCommand_)
+  {
+    holdAndRearmTracking();
+    if(replacingActiveSession)
+    {
+      mc_rtc::log::warning("[{}] New experiment session received; holding the current targets until both menu "
+                           "buttons are confirmed again",
+                           name());
+    }
+  }
+  else
+  {
+    clearInputHistories();
+  }
+
+  experimentCondition_ = pendingExperimentCondition_;
+  experimentSessionId_ = pendingExperimentSessionId_;
+  experimentConditionName_ = experimentConditionName(experimentCondition_);
+  experimentAssistanceEnabled_ = experimentCondition_ == 2 || experimentCondition_ == 4;
+  inputDelay_ = experimentCondition_ >= 3 ? experimentDelayedInputSeconds_ : 0.0;
+  experimentConditionReceived_ = true;
+  pendingExperimentCommand_ = false;
+
+  ctl.datastore().get<int>(experimentConditionKey_) = experimentCondition_;
+  ctl.datastore().get<std::string>(experimentConditionNameKey_) = experimentConditionName_;
+  ctl.datastore().get<std::string>(experimentSessionKey_) = experimentSessionId_;
+  ctl.datastore().get<bool>(experimentAssistanceKey_) = experimentAssistanceEnabled_;
+  ctl.datastore().get<double>(experimentDelayKey_) = inputDelay_;
+  ctl.datastore().get<bool>(experimentConditionReadyKey_) = true;
+
+  mc_rtc::log::success("[{}] Experiment session {}: condition {} ({}), input delay={:.1f}s, assistance={}",
+                       name(),
+                       experimentSessionId_,
+                       experimentCondition_,
+                       experimentConditionName_,
+                       inputDelay_,
+                       experimentAssistanceEnabled_);
+}
+
+void ViveHandBridge::holdAndRearmTracking()
+{
+  auto holdTarget = [](auto & state) {
+    if(state.task)
+    {
+      state.zeroRobot = state.task->target();
+      state.task->target(state.zeroRobot);
+      state.task->targetVel(sva::MotionVecd::Zero());
+    }
+    state.zeroed = false;
+    state.previousTargetValid = false;
+    state.heldTargetVelocity = sva::MotionVecd::Zero();
+  };
+  holdTarget(left_);
+  holdTarget(right_);
+  holdTarget(leftArm_);
+  holdTarget(rightArm_);
+
+  trackingStarted_ = false;
+  initialLeftResetSeen_ = false;
+  initialRightResetSeen_ = false;
+  initialWaitingForDataLogged_ = false;
+  trackingHandoverStartTime_ = -1.0;
+  zeroRequested_ = false;
+  autoZeroDone_ = false;
+  clearInputHistories();
+}
+
+void ViveHandBridge::clearInputHistories()
+{
+  auto clearTracker = [](auto & state) {
+    state.history.clear();
+    state.hasData = false;
+    state.latestSampleTime = 0.0;
+    state.previousTargetValid = false;
+    state.heldTargetVelocity = sva::MotionVecd::Zero();
+  };
+  clearTracker(left_);
+  clearTracker(right_);
+  clearTracker(leftArm_);
+  clearTracker(rightArm_);
+  clearTracker(waist_);
+
+  left_.rawResetButton = false;
+  right_.rawResetButton = false;
+  left_.previousReceivedResetButton = false;
+  right_.previousReceivedResetButton = false;
+  left_.resetPressPending = false;
+  right_.resetPressPending = false;
+  left_.previousResetButton = false;
+  right_.previousResetButton = false;
+  // A grip/trigger already held while a new condition is selected must not become a fresh command.
+  left_.previousGripperButton = true;
+  right_.previousGripperButton = true;
+  left_.previousGraspNotificationButton = true;
+  right_.previousGraspNotificationButton = true;
+}
+
+std::string ViveHandBridge::experimentConditionName(int condition) const
+{
+  switch(condition)
+  {
+    case 1:
+      return "no-delay / no-assistance";
+    case 2:
+      return "no-delay / assistance";
+    case 3:
+      return "1.5s-delay / no-assistance";
+    case 4:
+      return "1.5s-delay / assistance";
+    default:
+      return "invalid";
   }
 }
 

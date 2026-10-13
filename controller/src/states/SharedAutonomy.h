@@ -23,6 +23,9 @@ private:
 
   /// @{ CONFIG
   bool enabled_ = true;
+  bool useExperimentAssistanceGate_ = false;
+  bool experimentGateOpen_ = false;
+  std::string experimentAssistanceKey_ = "ANA::Experiment::assistance_enabled";
   bool warnedMissingData_ = false;
   double alpha;
   int currentGoal;

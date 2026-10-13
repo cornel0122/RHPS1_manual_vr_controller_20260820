@@ -1,6 +1,7 @@
-# RHPS1 Manual Vive Teleoperation Controller
+# RHPS1 Vive Teleoperation and Experiment Controller
 
-本目录用于把 RHPS1 最基础的 Vive 手动遥操作控制器从 Operator PC 搬运到实验室 Control PC。
+本目录用于把 RHPS1 的 Vive 手动遥操作控制器从 Operator PC 搬运到实验室 Control PC，
+并提供一套不必重新编译即可切换四种实验条件的真机实验 controller。
 
 ## 目录
 
@@ -24,7 +25,7 @@ Vive -> ROS 2 -> ViveHandBridge/ViveHeadBridge
      -> ANA retargeting tasks -> mc_rtc QP -> RHPS1
 ```
 
-预期实验条件：
+稳定的纯手动回退版本为：
 
 - 输入延迟：0 秒；
 - 线速度前馈：开启，gain=1.0；
@@ -33,6 +34,26 @@ Vive -> ROS 2 -> ViveHandBridge/ViveHeadBridge
 - 共享自主：关闭；
 - YOLO/CHMM：不运行；
 - MuJoCo/磁力抓取：不部署。
+
+四条件实验版本为：
+
+```text
+ANAAvatarControllerRHPS1_experiment
+```
+
+Control PC 始终运行这一套 controller；Operator PC 用一个参数选择：
+
+```text
+1 = 0.0 s 延迟，无辅助
+2 = 0.0 s 延迟，有辅助
+3 = 1.5 s 延迟，无辅助
+4 = 1.5 s 延迟，有辅助
+```
+
+参数到达只会配置条件并让 Vive bridge 进入待命，不会触发机器人运动。左右手柄分别按下
+`menu` 后才建立参考并平滑接管；重新发送新的实验 session 时也会冻结当前 task 并重新等待
+双手确认。条件 3/4 同时延迟手/臂/腰输入和 HMD 头部旋转，但不延迟机器人相机画面。
+条件 1/3 在控制输出层硬性关闭共享自主，但仍可运行意图识别以记录 belief。
 
 ## 阅读顺序
 
@@ -84,7 +105,8 @@ ANAAvatarControllerRHPS1_manual_project
 ```
 
 第二个是 superbuild 内部的项目 target 名；安装后在 mc_rtc 配置中选择的
-controller 名仍然是 `ANAAvatarControllerRHPS1_manual`。
+纯手动 controller 名为 `ANAAvatarControllerRHPS1_manual`，四条件实验 controller 名为
+`ANAAvatarControllerRHPS1_experiment`。
 
 独立构建控制器时请在 CMake 配置参数中加入
 `-DINSTALL_DOCUMENTATION=OFF`。源码包不包含生成后的 Doxygen 文档；该参数只关闭文档安装，不影响控制器、状态插件或配置文件。
@@ -109,6 +131,12 @@ UI_SharedAutonomy 或左右 SharedAutonomy。进入手动状态后，Vive bridge
 4. 先完成 ROS 2 跨电脑输入检查。
 
 未经以上确认，不要在实体机器人上按下 `Start MC Control`。
+
+完成纯手动链路验证后，四条件实验的安装与运行方法见：
+
+```text
+docs/RHPS1实体机器人_四条件实验控制器说明_20261013.md
+```
 
 ## 来源
 

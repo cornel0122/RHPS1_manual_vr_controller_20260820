@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ $# -lt 1 || ! "$1" =~ ^[1-4]$ ]]; then
+  cat >&2 <<'EOF'
+Usage: ./run_rhps1_experiment CONDITION [Vive talker arguments...]
+
+  1  no delay, no assistance
+  2  no delay, assistance enabled
+  3  1.5 s delay, no assistance
+  4  1.5 s delay, assistance enabled
+EOF
+  exit 2
+fi
+
+CONDITION="$1"
+shift
+
+case "$CONDITION" in
+  1) CONDITION_NAME="no delay, no assistance" ;;
+  2) CONDITION_NAME="no delay, assistance enabled" ;;
+  3) CONDITION_NAME="1.5 s delay, no assistance" ;;
+  4) CONDITION_NAME="1.5 s delay, assistance enabled" ;;
+esac
+
+# Prevent two launchers from publishing conflicting conditions to the real robot.
+exec 9>/tmp/ana_rhps1_experiment.lock
+if ! flock -n 9; then
+  echo "Another RHPS1 experiment launcher is already running." >&2
+  exit 1
+fi
+
+source "$ROOT_DIR/rhps1_ros_env.sh"
+
+VIVE_ROS_SETUP="${VIVE_ROS_SETUP:-$HOME/luyisi/ViveSimpleInterface-main/ros/install/setup.bash}"
+if [[ ! -f "$VIVE_ROS_SETUP" ]]; then
+  echo "Vive ROS setup not found: $VIVE_ROS_SETUP" >&2
+  echo "Set VIVE_ROS_SETUP to ViveSimpleInterface's install/setup.bash." >&2
+  exit 1
+fi
+source "$VIVE_ROS_SETUP"
+
+SESSION_ID="$(date +%Y%m%dT%H%M%S)-$$"
+CONDITION_PID=""
+
+cleanup() {
+  if [[ -n "$CONDITION_PID" ]]; then
+    kill "$CONDITION_PID" 2>/dev/null || true
+    wait "$CONDITION_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT INT TERM
+
+python3 "$ROOT_DIR/experiment_condition_publisher.py" \
+  "$CONDITION" --session "$SESSION_ID" &
+CONDITION_PID=$!
+
+sleep 1
+echo "RHPS1 experiment session: $SESSION_ID"
+echo "Condition $CONDITION: $CONDITION_NAME"
+echo "After Control PC shows this condition, press menu on both controllers to start tracking."
+echo "ROS 2: domain=$ROS_DOMAIN_ID, rmw=$RMW_IMPLEMENTATION"
+
+ros2 run vr_interface_node talker "$@"

@@ -72,8 +72,15 @@ void RelativeRetargetting::start(mc_control::fsm::Controller & ctl)
   rConfig("activeJoints", activeJoints_);
   rConfig("body_frame_relative_pose", X_body_frame_);
 
-  auto & mocap_freq_func = ctl.datastore().get<std::function<int(void)>>("mocap_plugin::get_data_frequency");
-  data_frequency_ = mocap_freq_func();
+  if(ctl.datastore().has("mocap_plugin::get_data_frequency"))
+  {
+    auto & mocap_freq_func = ctl.datastore().get<std::function<int(void)>>("mocap_plugin::get_data_frequency");
+    data_frequency_ = mocap_freq_func();
+  }
+  else
+  {
+    mc_rtc::log::info("[{}] No mocap plugin; using the configured/default data frequency for Vive task setup", name());
+  }
   mc_rtc::log::info("[{}] data freq {}", name(), data_frequency_);
 
   int part = 0;
@@ -532,7 +539,6 @@ void RelativeRetargetting::update_force_cstr(mc_control::fsm::Controller & ctl,
 void RelativeRetargetting::createGUI(mc_control::fsm::Controller & ctl)
 {
   auto & gui = *ctl.gui();
-  auto & mocap_online = ctl.datastore().get<bool>("mocap_plugin::online");
 
   gui.addElement(this, {"Avatar", name()},
                  mc_rtc::gui::Label("Data Online", [this]() -> const bool & { return data_online_; }));
