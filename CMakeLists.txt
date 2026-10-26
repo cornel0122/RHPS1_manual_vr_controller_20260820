@@ -55,9 +55,9 @@ foreach(optional_dependency lipm_walking_controller)
   endif()
 endforeach()
 
-if(NOT TARGET ANAAvatarControllerRHPS1_manual_project)
+if(NOT TARGET ANAAvatarControllerRHPS1CornelVive_project)
   AddProject(
-    ANAAvatarControllerRHPS1_manual_project
+    ANAAvatarControllerRHPS1CornelVive_project
     SOURCE_DIR "${RHPS1_MANUAL_VR_EXTENSION_ROOT}/controller"
     CMAKE_ARGS
       -DBUILD_TESTING=OFF

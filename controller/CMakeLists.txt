@@ -3,7 +3,7 @@ cmake_minimum_required(VERSION 3.5)
 set(CXX_DISABLE_WERROR 1)
 set(CMAKE_CXX_STANDARD 17)
 
-set(PROJECT_NAME ANAAvatarControllerRHPS1)
+set(PROJECT_NAME ANAAvatarControllerRHPS1CornelVive)
 set(PROJECT_DESCRIPTION "Demonstrator for the ANA XPRIZE avatar challenge")
 set(PROJECT_URL "https://github.com/isri-aist/mc_ana_avatar_controller")
 
@@ -62,8 +62,8 @@ set(AVATAR_PLUGINS
     "[footsteps_planner_plugin, ExternalFootstepPlannerPlugin, mocap_plugin, EmergencyButtonPlugin, FingersForceSensorsPlugin]"
 )
 configure_file(etc/ANAAvatarController.in.yaml
-               "${CMAKE_CURRENT_BINARY_DIR}/etc/ANAAvatarControllerRHPS1.yaml")
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/ANAAvatarControllerRHPS1.yaml"
+               "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}.yaml")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}.yaml"
         DESTINATION "${MC_CONTROLLER_INSTALL_PREFIX}/etc")
 
 # 实体 RHPS1 的纯手动 VR 版本。保留 LIPM 站立稳定器，但不进入仿真中
@@ -83,8 +83,8 @@ set(AVATAR_EXTRA_CONFIG "")
 # EmergencyButtonPlugin 在该源码包中不是必需依赖；真机急停仍由 RHPS1 硬件安全链负责。
 set(AVATAR_PLUGINS "[mocap_plugin]")
 configure_file(etc/ANAAvatarController.in.yaml
-               "${CMAKE_CURRENT_BINARY_DIR}/etc/ANAAvatarControllerRHPS1_manual.yaml")
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/ANAAvatarControllerRHPS1_manual.yaml"
+               "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_manual.yaml")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_manual.yaml"
         DESTINATION "${MC_CONTROLLER_INSTALL_PREFIX}/etc")
 
 # 实体 RHPS1 的四条件实验版本。Control PC 始终加载这一套 controller；
@@ -101,8 +101,8 @@ set(AVATAR_EXTRA_CONFIG "")
 # states only create the hand/arm tasks and no longer need a live mocap plugin.
 set(AVATAR_PLUGINS "[]")
 configure_file(etc/ANAAvatarController.in.yaml
-               "${CMAKE_CURRENT_BINARY_DIR}/etc/ANAAvatarControllerRHPS1_experiment.yaml")
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/ANAAvatarControllerRHPS1_experiment.yaml"
+               "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_experiment.yaml")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_experiment.yaml"
         DESTINATION "${MC_CONTROLLER_INSTALL_PREFIX}/etc")
 
 set(AVATAR_INITIAL_STATE "Avatar::Initial")
@@ -119,8 +119,8 @@ set(AVATAR_PLUGINS "[mocap_plugin]")
 # "robots: ground: module: env/ground rhps1: init_pos: translation: [0.154693,
 # 0.030944, 1.052131] rotation: [0.980860, -0.080516, -0.163517, 0.068512] ")
 configure_file(etc/ANAAvatarController.in.yaml
-               "${CMAKE_CURRENT_BINARY_DIR}/etc/ANAAvatarControllerRHPS1_none.yaml")
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/ANAAvatarControllerRHPS1_none.yaml"
+               "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_none.yaml")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_none.yaml"
         DESTINATION "${MC_CONTROLLER_INSTALL_PREFIX}/etc")
 
 # 本机安装的 ISMPC 接口早于工程师分支；当前融合只构建实际需要的 LIPM 与无行走版本。
