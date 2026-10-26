@@ -1,5 +1,24 @@
 # RHPS1 Vive Teleoperation and Experiment Controller
 
+## Cornel 真机隔离版本
+
+`cornel-vive-controller` 分支为避免与 Control PC 上已有的 ANA/Unreal
+controller 冲突，使用独立名称：
+
+```text
+ANAAvatarControllerRHPS1CornelVive_manual
+```
+
+对应的 superbuild project target 为：
+
+```text
+ANAAvatarControllerRHPS1CornelVive_project
+```
+
+本分支只导出上述纯手动 controller；不会覆盖已有的
+`ANAAvatarControllerRHPS1_manual`。应把仓库作为独立目录放在
+`mc-rtc-superbuild/extensions/` 下构建。
+
 本目录用于把 RHPS1 的 Vive 手动遥操作控制器从 Operator PC 搬运到实验室 Control PC，
 并提供一套不必重新编译即可切换四种实验条件的真机实验 controller。
 
@@ -95,18 +114,17 @@ docs/RHPS1真机夹具与ZED画面准备_20260824.md
 仓库顶层 `CMakeLists.txt` 是 mc-rtc-superbuild extension 入口。在 Control PC 上应将
 整个仓库克隆到现有 superbuild 的 `extensions/` 目录，不要直接安装到系统目录。
 
-extension 会按以下顺序注册三个项目：
+该分支的 extension 会按以下顺序注册四个项目：
 
 ```text
 vr_interface_msgs
 ForceConstrainedTransformTask
 mc_neuron_mocap_plugin
-ANAAvatarControllerRHPS1_manual_project
+ANAAvatarControllerRHPS1CornelVive_project
 ```
 
-第二个是 superbuild 内部的项目 target 名；安装后在 mc_rtc 配置中选择的
-纯手动 controller 名为 `ANAAvatarControllerRHPS1_manual`，四条件实验 controller 名为
-`ANAAvatarControllerRHPS1_experiment`。
+最后一个是 superbuild 内部的 project target 名；安装后在 mc_rtc 配置中选择的
+纯手动 controller 名为 `ANAAvatarControllerRHPS1CornelVive_manual`。
 
 独立构建控制器时请在 CMake 配置参数中加入
 `-DINSTALL_DOCUMENTATION=OFF`。源码包不包含生成后的 Doxygen 文档；该参数只关闭文档安装，不影响控制器、状态插件或配置文件。
@@ -116,7 +134,7 @@ ANAAvatarControllerRHPS1_manual_project
 实体机器人必须选择新增的纯手动 controller：
 
 ```text
-ANAAvatarControllerRHPS1_manual
+ANAAvatarControllerRHPS1CornelVive_manual
 ```
 
 该版本已经跳过 `PrepareRHPS1ForVR`，运行链中也不包含 IntentRecognitionBridge、
