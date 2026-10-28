@@ -7,6 +7,7 @@ controller 冲突，使用独立名称：
 
 ```text
 ANAAvatarControllerRHPS1CornelVive_manual
+ANAAvatarControllerRHPS1CornelVive_experiment
 ```
 
 对应的 superbuild project target 为：
@@ -15,9 +16,19 @@ ANAAvatarControllerRHPS1CornelVive_manual
 ANAAvatarControllerRHPS1CornelVive_project
 ```
 
-本分支只导出上述纯手动 controller；不会覆盖已有的
+本分支导出纯手动和四条件实验 controller；不会覆盖已有的
 `ANAAvatarControllerRHPS1_manual`。应把仓库作为独立目录放在
 `mc-rtc-superbuild/extensions/` 下构建。
+
+真机实验应在启动时选择 `ANAAvatarControllerRHPS1CornelVive_experiment`，之后在同一次
+MC Control 运行中切换四种条件，不需要重启机器人。Vive 操作方式为：
+
+- `READY/PAUSED`：双手同时短按 `menu`，开始或继续 direct waist-relative retargetting；
+- `RUNNING`：双手同时长按 `menu` 1.5 秒，暂停并保持当前机器人姿态；
+- 暂停/继续不会建立新的手部零点；
+- `Avatar -> Experiment Reset` 仅在暂停时允许机器人用 8 秒返回 controller 启动时记录的实验起始姿态。
+
+详细流程见 `docs/Cornel_Vive暂停与组间复位_20261028.md`。
 
 本目录用于把 RHPS1 的 Vive 手动遥操作控制器从 Operator PC 搬运到实验室 Control PC，
 并提供一套不必重新编译即可切换四种实验条件的真机实验 controller。
@@ -57,7 +68,7 @@ Vive -> ROS 2 -> ViveHandBridge/ViveHeadBridge
 四条件实验版本为：
 
 ```text
-ANAAvatarControllerRHPS1_experiment
+ANAAvatarControllerRHPS1CornelVive_experiment
 ```
 
 Control PC 始终运行这一套 controller；Operator PC 用一个参数选择：
@@ -69,9 +80,9 @@ Control PC 始终运行这一套 controller；Operator PC 用一个参数选择�
 4 = 1.5 s 延迟，有辅助
 ```
 
-参数到达只会配置条件并让 Vive bridge 进入待命，不会触发机器人运动。左右手柄分别按下
-`menu` 后才建立参考并平滑接管；重新发送新的实验 session 时也会冻结当前 task 并重新等待
-双手确认。条件 3/4 同时延迟手/臂/腰输入和 HMD 头部旋转，但不延迟机器人相机画面。
+参数到达只会配置条件并让 Vive bridge 进入待命，不会触发机器人运动。左右手柄同时短按
+`menu` 后开始或继续 direct waist-relative 控制；重新发送新的实验 session 时也会冻结当前 task
+并重新等待双手确认。条件 3/4 同时延迟手/臂/腰输入和 HMD 头部旋转，但不延迟机器人相机画面。
 条件 1/3 在控制输出层硬性关闭共享自主，但仍可运行意图识别以记录 belief。
 
 ## 阅读顺序
@@ -124,7 +135,8 @@ ANAAvatarControllerRHPS1CornelVive_project
 ```
 
 最后一个是 superbuild 内部的 project target 名；安装后在 mc_rtc 配置中选择的
-纯手动 controller 名为 `ANAAvatarControllerRHPS1CornelVive_manual`。
+纯手动 controller 名为 `ANAAvatarControllerRHPS1CornelVive_manual`，四条件实验名称为
+`ANAAvatarControllerRHPS1CornelVive_experiment`。
 
 独立构建控制器时请在 CMake 配置参数中加入
 `-DINSTALL_DOCUMENTATION=OFF`。源码包不包含生成后的 Doxygen 文档；该参数只关闭文档安装，不影响控制器、状态插件或配置文件。
@@ -139,7 +151,7 @@ ANAAvatarControllerRHPS1CornelVive_manual
 
 该版本已经跳过 `PrepareRHPS1ForVR`，运行链中也不包含 IntentRecognitionBridge、
 UI_SharedAutonomy 或左右 SharedAutonomy。进入手动状态后，Vive bridge 会保持机器人
-当前手臂姿态，直到左右手柄均通过 `menu` 按键确认，再用 2 秒 handover 平滑接管。
+当前手臂姿态，直到左右手柄同时短按 `menu`；运行中双手长按 1.5 秒可暂停控制。
 
 在实体机器人上开始运动前仍需：
 

@@ -2,6 +2,7 @@
 
 #include <mc_control/fsm/State.h>
 #include <mc_tasks/ForceConstrainedTransformTask.h>
+#include <mc_tasks/PostureTask.h>
 #include <mc_tasks/TransformTask.h>
 #include <geometry_msgs/msg/accel_stamped.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
@@ -69,6 +70,7 @@ private:
     bool previousReceivedResetButton = false;
     bool resetPressPending = false;
     uint64_t resetPressCount = 0;
+    double resetPressTime = -1.0;
     bool previousResetButton = false;
     bool previousGripperButton = false;
     bool previousGraspNotificationButton = false;
@@ -116,6 +118,12 @@ private:
   void onExperimentCommand(const std_msgs::msg::String::SharedPtr msg);
   void applyPendingExperimentCommand(mc_control::fsm::Controller & ctl);
   void holdAndRearmTracking();
+  void holdCurrentTargets();
+  bool startOrResumeTracking(mc_control::fsm::Controller & ctl);
+  void pauseTracking();
+  void processExperimentReset(mc_control::fsm::Controller & ctl);
+  void captureExperimentStartPose(mc_control::fsm::Controller & ctl);
+  std::string controlStateName() const;
   void clearInputHistories();
   std::string experimentConditionName(int condition) const;
   void updateDelayedInputs();
@@ -180,11 +188,41 @@ private:
   bool requireInitialTwoHandReset_ = true;
   bool initialZeroRequiresArmTrackers_ = true;
   bool trackingStarted_ = false;
+  bool trackingEverStarted_ = false;
+  bool trackingPaused_ = false;
   bool initialLeftResetSeen_ = false;
   bool initialRightResetSeen_ = false;
   bool initialWaitingForDataLogged_ = false;
   double trackingHandoverStartTime_ = -1.0;
   double trackingHandoverDuration_ = 2.0;
+  double twoHandPressWindow_ = 0.5;
+  double twoHandPauseHoldDuration_ = 1.5;
+  double bothMenuHoldStartTime_ = -1.0;
+  double bothMenuHoldProgress_ = 0.0;
+  bool menuActionArmed_ = true;
+  uint64_t startResumeCount_ = 0;
+  uint64_t pauseCount_ = 0;
+
+  bool experimentStartPoseCaptured_ = false;
+  bool experimentResetRequested_ = false;
+  bool experimentResetAbortRequested_ = false;
+  bool experimentResetActive_ = false;
+  double experimentResetDuration_ = 8.0;
+  double experimentResetStartTime_ = -1.0;
+  double experimentResetProgress_ = 0.0;
+  std::string experimentResetStatus_ = "not requested";
+  sva::PTransformd experimentStartLeftHand_ = sva::PTransformd::Identity();
+  sva::PTransformd experimentStartRightHand_ = sva::PTransformd::Identity();
+  sva::PTransformd experimentStartLeftArm_ = sva::PTransformd::Identity();
+  sva::PTransformd experimentStartRightArm_ = sva::PTransformd::Identity();
+  sva::PTransformd experimentStartHead_ = sva::PTransformd::Identity();
+  sva::PTransformd experimentResetFromLeftHand_ = sva::PTransformd::Identity();
+  sva::PTransformd experimentResetFromRightHand_ = sva::PTransformd::Identity();
+  sva::PTransformd experimentResetFromLeftArm_ = sva::PTransformd::Identity();
+  sva::PTransformd experimentResetFromRightArm_ = sva::PTransformd::Identity();
+  sva::PTransformd experimentResetFromHead_ = sva::PTransformd::Identity();
+  std::vector<std::vector<double>> experimentStartPosture_;
+  std::vector<std::vector<double>> experimentResetFromPosture_;
 
   HandState left_;
   HandState right_;
@@ -201,6 +239,7 @@ private:
   std::string rightTaskName_ = "ANA::RightHandRetargetingTask";
   std::string leftArmTaskName_ = "ANA::LeftArmRetargetingTask";
   std::string rightArmTaskName_ = "ANA::RightArmRetargetingTask";
+  std::string headTaskName_ = "ANA::HeadRetargetingTask";
   std::string leftGripper_ = "l_gripper";
   std::string rightGripper_ = "r_gripper";
   std::string leftGripperJoint_ = "L_HAND_THUMB_J0";
@@ -209,6 +248,7 @@ private:
   std::string leftRobotHandFrame_ = "LeftHand";
   std::string rightRobotHandFrame_ = "RightHand";
   mc_rtc::Configuration config_;
+  std::shared_ptr<mc_tasks::TransformTask> headTask_;
 
   double scale_ = 1.0;
   Eigen::Vector3d axisScale_ = Eigen::Vector3d::Ones();

@@ -26,6 +26,7 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
   config("right_task", rightTaskName_);
   config("left_arm_task", leftArmTaskName_);
   config("right_arm_task", rightArmTaskName_);
+  config("head_task", headTaskName_);
   config("scale", scale_);
   if(config.has("axis_scale"))
   {
@@ -145,6 +146,12 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
   config("robot_waist_frame", robotWaistFrame_);
   config("direct_waist_keep_hand_side", directWaistKeepHandSide_);
   config("tracking_handover_duration", trackingHandoverDuration_);
+  config("two_hand_press_window", twoHandPressWindow_);
+  config("two_hand_pause_hold_duration", twoHandPauseHoldDuration_);
+  config("experiment_reset_duration", experimentResetDuration_);
+  twoHandPressWindow_ = std::max(0.05, twoHandPressWindow_);
+  twoHandPauseHoldDuration_ = std::max(0.5, twoHandPauseHoldDuration_);
+  experimentResetDuration_ = std::max(1.0, experimentResetDuration_);
   config("adhesion_topic", adhesionTopic_);
   config("grasp_event_topic", graspEventTopic_);
   if(config.has("grasp_notification_trigger_threshold"))
@@ -394,6 +401,16 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
     mc_rtc::log::warning("[{}] Missing datastore task {}", name(), rightArmTaskName_);
   }
 
+  if(ctl.datastore().has(headTaskName_))
+  {
+    headTask_ = ctl.datastore().get<std::shared_ptr<mc_tasks::TransformTask>>(headTaskName_);
+  }
+  else
+  {
+    mc_rtc::log::warning("[{}] Missing optional datastore task {}; head will not be included in GUI reset",
+                         name(), headTaskName_);
+  }
+
   // 等待首次双手确认期间，四个 retargetting task 必须保持当前机器人姿态。
   // 否则任务内部残留的 Unity 目标会在 Vive 数据接管前先拉动手臂。
   if(left_.task)
@@ -420,6 +437,8 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
     rightArm_.task->target(rightArm_.zeroRobot);
     rightArm_.task->targetVel(sva::MotionVecd::Zero());
   }
+
+  captureExperimentStartPose(ctl);
 
   auto addUnique = [](std::vector<std::string> & topics, const std::string & topic) {
     if(!topic.empty() && std::find(topics.begin(), topics.end(), topic) == topics.end())
@@ -457,8 +476,11 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
 
   ctl.gui()->addElement(
       this, {"Avatar", "Vive"},
-      mc_rtc::gui::Button("Set hand zero", [this, &ctl]() { setZero(ctl); }),
+      mc_rtc::gui::Label("Control state", [this]() { return controlStateName(); }),
       mc_rtc::gui::Label("Tracking started", [this]() { return trackingStarted_; }),
+      mc_rtc::gui::Label("Both-menu hold [s]", [this]() { return bothMenuHoldProgress_; }),
+      mc_rtc::gui::Label("Start/resume count", [this]() { return std::to_string(startResumeCount_); }),
+      mc_rtc::gui::Label("Pause count", [this]() { return std::to_string(pauseCount_); }),
       mc_rtc::gui::Label("Experiment condition received", [this]() { return experimentConditionReceived_; }),
       mc_rtc::gui::Label("Experiment condition", [this]() -> const std::string & {
         return experimentConditionName_;
@@ -506,6 +528,16 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
                                [this](double s) { maxStep_ = std::max(0.05, s); }),
       mc_rtc::gui::NumberInput("Input delay [s]", [this]() { return inputDelay_; },
                                [this](double d) { inputDelay_ = std::max(0.0, d); }));
+
+  ctl.gui()->addElement(
+      this, {"Avatar", "Experiment Reset"},
+      mc_rtc::gui::Label("Vive control state", [this]() { return controlStateName(); }),
+      mc_rtc::gui::Label("Reset target", []() { return std::string("controller start pose"); }),
+      mc_rtc::gui::Label("Start pose captured", [this]() { return experimentStartPoseCaptured_; }),
+      mc_rtc::gui::Label("Reset status", [this]() -> const std::string & { return experimentResetStatus_; }),
+      mc_rtc::gui::Label("Reset progress", [this]() { return experimentResetProgress_; }),
+      mc_rtc::gui::Button("Reset to experiment start pose", [this]() { experimentResetRequested_ = true; }),
+      mc_rtc::gui::Button("Abort reset", [this]() { experimentResetAbortRequested_ = true; }));
 
   // 实验日志记录实际运行参数，便于区分无延迟和有延迟试次。
   const std::string experimentLogPrefix = name() + "_experiment_";
@@ -558,168 +590,70 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
   const bool rightResetRising = right_.resetPressPending || (rightReset && !right_.previousResetButton);
   left_.resetPressPending = false;
   right_.resetPressPending = false;
-
-  if(requireInitialTwoHandReset_ && !trackingStarted_)
+  if(!leftReset && !rightReset)
   {
-    if(leftResetRising)
-    {
-      initialLeftResetSeen_ = true;
-      mc_rtc::log::info("[{}] Initial left reset confirmed", name());
-    }
-    if(rightResetRising)
-    {
-      initialRightResetSeen_ = true;
-      mc_rtc::log::info("[{}] Initial right reset confirmed", name());
-    }
+    menuActionArmed_ = true;
+    bothMenuHoldStartTime_ = -1.0;
+    bothMenuHoldProgress_ = 0.0;
+  }
+
+  processExperimentReset(ctl);
+  if(experimentResetActive_)
+  {
     left_.previousResetButton = leftReset;
     right_.previousResetButton = rightReset;
-
-    const bool experimentReady = !experimentConditionRequired_ || experimentConditionReceived_;
-    const bool zeroReferenceReady = !useWaistReference_ || waist_.hasData;
-    const bool armsReady = !initialZeroRequiresArmTrackers_ || (leftArm_.hasData && rightArm_.hasData);
-    const bool handsReady = left_.hasData && right_.hasData && left_.task && right_.task;
-    if(initialLeftResetSeen_ && initialRightResetSeen_)
-    {
-      if(experimentReady && zeroReferenceReady && armsReady && handsReady)
-      {
-        if(directWaistControl_)
-        {
-          // 腰部直接映射模式下，左右复位键只作为“开始操控”确认，不再记录手/臂/机器人零点。
-          // 所有手和大臂目标都直接由当前 waist-relative 位姿决定。
-          const std::string headZeroRequestKey = "ANA::ViveHeadBridge::zero_request";
-          if(ctl.datastore().has(headZeroRequestKey))
-          {
-            // 头部仍需要一个相对 HMD 零点；首次双手确认时通知 ViveHeadBridge 取当前姿态。
-            ctl.datastore().get<bool>(headZeroRequestKey) = true;
-            mc_rtc::log::info("[{}] Requested initial head zero from direct-mode start", name());
-          }
-          trackingStarted_ = true;
-          trackingHandoverStartTime_ = now();
-          autoZeroDone_ = true;
-          zeroRequested_ = false;
-          left_.previousTargetValid = false;
-          right_.previousTargetValid = false;
-          leftArm_.previousTargetValid = false;
-          rightArm_.previousTargetValid = false;
-          mc_rtc::log::success("[{}] Vive waist-relative direct tracking started", name());
-        }
-        else
-        {
-          // 第一次双手确认后，才统一记录人体和机器人当前姿态作为零点。
-          // 这避免了 controller 启动瞬间用随机站姿/未戴好设备的第一帧自动复位。
-          const std::string headZeroRequestKey = "ANA::ViveHeadBridge::zero_request";
-          if(ctl.datastore().has(headZeroRequestKey))
-          {
-            ctl.datastore().get<bool>(headZeroRequestKey) = true;
-            mc_rtc::log::info("[{}] Requested initial head zero from two-hand reset", name());
-          }
-          setZero(ctl);
-          autoZeroDone_ = true;
-          zeroRequested_ = false;
-          trackingStarted_ = left_.zeroed && right_.zeroed && zeroReferenceReady && armsReady;
-          if(trackingStarted_)
-          {
-            mc_rtc::log::success("[{}] Vive tracking started after two-hand initial reset", name());
-          }
-        }
-
-        if(trackingStarted_)
-        {
-          // 启动确认只负责放行追踪；夹具必须在之后单独按 grip 才会闭合。
-          left_.gripperClosed = false;
-          right_.gripperClosed = false;
-          left_.previousGripperButton = true;
-          right_.previousGripperButton = true;
-          left_.previousGraspNotificationButton =
-              left_.hasData && left_.latest.trigger >= graspNotificationTriggerThreshold_;
-          right_.previousGraspNotificationButton =
-              right_.hasData && right_.latest.trigger >= graspNotificationTriggerThreshold_;
-        }
-      }
-      else if(!initialWaitingForDataLogged_)
-      {
-        initialWaitingForDataLogged_ = true;
-        mc_rtc::log::warning("[{}] Initial reset buttons confirmed, waiting for data before zeroing: "
-                             "condition={}, hands={}, waist={}, arms={}",
-                             name(),
-                             experimentReady,
-                             handsReady,
-                             zeroReferenceReady,
-                             armsReady);
-      }
-    }
-
-    // Parallel 中的旧 retargetting state 仍会运行，所以等待期间每一周期都重写保持目标。
-    if(left_.task)
-    {
-      left_.task->target(left_.zeroRobot);
-      left_.task->targetVel(sva::MotionVecd::Zero());
-    }
-    if(right_.task)
-    {
-      right_.task->target(right_.zeroRobot);
-      right_.task->targetVel(sva::MotionVecd::Zero());
-    }
-    if(leftArm_.task)
-    {
-      leftArm_.task->target(leftArm_.zeroRobot);
-      leftArm_.task->targetVel(sva::MotionVecd::Zero());
-    }
-    if(rightArm_.task)
-    {
-      rightArm_.task->target(rightArm_.zeroRobot);
-      rightArm_.task->targetVel(sva::MotionVecd::Zero());
-    }
-
     output("OK");
     return true;
   }
 
-  const bool leftResetActive = leftReset || leftResetRising;
-  const bool rightResetActive = rightReset || rightResetRising;
-  if(leftResetActive && rightResetActive && (leftResetRising || rightResetRising))
+  const bool simultaneousPress =
+      left_.resetPressTime >= 0.0 && right_.resetPressTime >= 0.0
+      && std::abs(left_.resetPressTime - right_.resetPressTime) <= twoHandPressWindow_;
+  const bool startChord = menuActionArmed_ && simultaneousPress && (leftResetRising || rightResetRising);
+
+  if(trackingStarted_)
   {
-    if(directWaistControl_)
+    if(menuActionArmed_ && leftReset && rightReset)
     {
-      // 腰部直接映射模式下，运行中再次双手按键只清空速度差分历史，避免瞬时速度尖峰。
-      left_.previousTargetValid = false;
-      right_.previousTargetValid = false;
-      leftArm_.previousTargetValid = false;
-      rightArm_.previousTargetValid = false;
-      const std::string headZeroRequestKey = "ANA::ViveHeadBridge::zero_request";
-      if(ctl.datastore().has(headZeroRequestKey))
+      if(bothMenuHoldStartTime_ < 0.0)
       {
-        // 手和 arm 不重新取零点，但双键仍允许以当前 HMD 姿态重置机器人头部。
-        ctl.datastore().get<bool>(headZeroRequestKey) = true;
-        mc_rtc::log::info("[{}] Requested head zero from direct-mode reset", name());
+        bothMenuHoldStartTime_ = now();
       }
-      mc_rtc::log::info("[{}] Direct waist mode: reset buttons clear target velocity history only", name());
+      bothMenuHoldProgress_ = std::max(0.0, now() - bothMenuHoldStartTime_);
+      if(bothMenuHoldProgress_ >= twoHandPauseHoldDuration_)
+      {
+        pauseTracking();
+        menuActionArmed_ = false;
+        ++pauseCount_;
+        mc_rtc::log::warning("[{}] Vive control paused by two-hand menu hold", name());
+      }
     }
     else
     {
-      // 双手同时按复位键：复位手/肘/腰，同时请求头显 bridge 以当前 HMD 姿态重置机器人头部零点。
-      zeroRequested_ = true;
-      const std::string headZeroRequestKey = "ANA::ViveHeadBridge::zero_request";
-      if(ctl.datastore().has(headZeroRequestKey))
-      {
-        ctl.datastore().get<bool>(headZeroRequestKey) = true;
-        mc_rtc::log::info("[{}] Requested head zero from two-hand reset", name());
-      }
-      else
-      {
-        mc_rtc::log::warning("[{}] Head zero request key '{}' is not available", name(), headZeroRequestKey);
-      }
+      bothMenuHoldStartTime_ = -1.0;
+      bothMenuHoldProgress_ = 0.0;
     }
   }
-  else if(leftResetRising || rightResetRising)
+  else if((!requireInitialTwoHandReset_ && !trackingEverStarted_) || startChord)
   {
-    if(!directWaistControl_)
+    if(startOrResumeTracking(ctl))
     {
-      zeroRequested_ = true;
+      initialLeftResetSeen_ = true;
+      initialRightResetSeen_ = true;
+      menuActionArmed_ = false;
+      ++startResumeCount_;
     }
   }
+
   left_.previousResetButton = leftReset;
   right_.previousResetButton = rightReset;
+
+  if(!trackingStarted_)
+  {
+    holdCurrentTargets();
+    output("OK");
+    return true;
+  }
 
   const bool leftGripper = gripperPressed(left_);
   const bool rightGripper = gripperPressed(right_);
@@ -755,27 +689,6 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
   }
   left_.previousGraspNotificationButton = leftGraspNotification;
   right_.previousGraspNotificationButton = rightGraspNotification;
-
-  const bool zeroReferenceReady = !useWaistReference_ || waist_.hasData;
-  if(!requireInitialTwoHandReset_ && !directWaistControl_ && autoZero_ && !autoZeroDone_ && zeroReferenceReady && left_.hasData && right_.hasData && left_.task
-     && right_.task)
-  {
-    mc_rtc::log::info("[{}] Auto-zeroing Vive input from first valid waist-relative poses", name());
-    setZero(ctl);
-    autoZeroDone_ = true;
-    trackingStarted_ = true;
-  }
-
-  if(zeroRequested_)
-  {
-    if(!directWaistControl_)
-    {
-      setZero(ctl);
-      autoZeroDone_ = true;
-      trackingStarted_ = true;
-    }
-    zeroRequested_ = false;
-  }
 
   updateHand(ctl, left_);
   updateHand(ctl, right_);
@@ -1006,14 +919,22 @@ void ViveHandBridge::applyPendingExperimentCommand(mc_control::fsm::Controller &
 
 void ViveHandBridge::holdAndRearmTracking()
 {
+  pauseTracking();
+  initialLeftResetSeen_ = false;
+  initialRightResetSeen_ = false;
+  initialWaitingForDataLogged_ = false;
+  menuActionArmed_ = false;
+  clearInputHistories();
+}
+
+void ViveHandBridge::holdCurrentTargets()
+{
   auto holdTarget = [](auto & state) {
     if(state.task)
     {
-      state.zeroRobot = state.task->target();
       state.task->target(state.zeroRobot);
       state.task->targetVel(sva::MotionVecd::Zero());
     }
-    state.zeroed = false;
     state.previousTargetValid = false;
     state.heldTargetVelocity = sva::MotionVecd::Zero();
   };
@@ -1021,15 +942,254 @@ void ViveHandBridge::holdAndRearmTracking()
   holdTarget(right_);
   holdTarget(leftArm_);
   holdTarget(rightArm_);
+  if(headTask_)
+  {
+    headTask_->targetVel(sva::MotionVecd::Zero());
+  }
+}
 
-  trackingStarted_ = false;
-  initialLeftResetSeen_ = false;
-  initialRightResetSeen_ = false;
-  initialWaitingForDataLogged_ = false;
+bool ViveHandBridge::startOrResumeTracking(mc_control::fsm::Controller & ctl)
+{
+  const bool experimentReady = !experimentConditionRequired_ || experimentConditionReceived_;
+  const bool waistReady = !useWaistReference_ || waist_.hasData;
+  const bool armsReady = !initialZeroRequiresArmTrackers_ || (leftArm_.hasData && rightArm_.hasData);
+  const bool handsReady = left_.hasData && right_.hasData && left_.task && right_.task;
+  if(!experimentReady || !waistReady || !armsReady || !handsReady)
+  {
+    if(!initialWaitingForDataLogged_)
+    {
+      initialWaitingForDataLogged_ = true;
+      mc_rtc::log::warning("[{}] Cannot start/resume Vive control: condition={}, hands={}, waist={}, arms={}",
+                           name(), experimentReady, handsReady, waistReady, armsReady);
+    }
+    return false;
+  }
+
+  const bool firstStart = !trackingEverStarted_;
+  if(!directWaistControl_ && firstStart)
+  {
+    setZero(ctl);
+    if(!left_.zeroed || !right_.zeroed)
+    {
+      return false;
+    }
+  }
+  if(directWaistControl_ && firstStart)
+  {
+    const std::string headZeroRequestKey = "ANA::ViveHeadBridge::zero_request";
+    if(ctl.datastore().has(headZeroRequestKey))
+    {
+      // Only the HMD needs an initial relative heading. Hand/arm control remains
+      // direct waist-relative and never establishes a button-triggered hand zero.
+      ctl.datastore().get<bool>(headZeroRequestKey) = true;
+    }
+  }
+
+  trackingStarted_ = true;
+  trackingPaused_ = false;
+  trackingEverStarted_ = true;
   trackingHandoverStartTime_ = -1.0;
+  autoZeroDone_ = true;
   zeroRequested_ = false;
-  autoZeroDone_ = false;
-  clearInputHistories();
+  initialWaitingForDataLogged_ = false;
+  left_.previousTargetValid = false;
+  right_.previousTargetValid = false;
+  leftArm_.previousTargetValid = false;
+  rightArm_.previousTargetValid = false;
+  left_.heldTargetVelocity = sva::MotionVecd::Zero();
+  right_.heldTargetVelocity = sva::MotionVecd::Zero();
+  leftArm_.heldTargetVelocity = sva::MotionVecd::Zero();
+  rightArm_.heldTargetVelocity = sva::MotionVecd::Zero();
+  left_.previousGripperButton = true;
+  right_.previousGripperButton = true;
+  left_.previousGraspNotificationButton =
+      left_.hasData && left_.latest.trigger >= graspNotificationTriggerThreshold_;
+  right_.previousGraspNotificationButton =
+      right_.hasData && right_.latest.trigger >= graspNotificationTriggerThreshold_;
+  mc_rtc::log::success("[{}] Vive control {}", name(), firstStart ? "started" : "resumed");
+  return true;
+}
+
+void ViveHandBridge::pauseTracking()
+{
+  auto captureAndHold = [](auto & state) {
+    if(state.task)
+    {
+      state.zeroRobot = state.task->target();
+      state.task->targetVel(sva::MotionVecd::Zero());
+    }
+    state.previousTargetValid = false;
+    state.heldTargetVelocity = sva::MotionVecd::Zero();
+  };
+  captureAndHold(left_);
+  captureAndHold(right_);
+  captureAndHold(leftArm_);
+  captureAndHold(rightArm_);
+  if(headTask_)
+  {
+    headTask_->targetVel(sva::MotionVecd::Zero());
+  }
+  trackingStarted_ = false;
+  trackingPaused_ = trackingEverStarted_;
+  trackingHandoverStartTime_ = -1.0;
+  bothMenuHoldStartTime_ = -1.0;
+  bothMenuHoldProgress_ = 0.0;
+}
+
+void ViveHandBridge::captureExperimentStartPose(mc_control::fsm::Controller & ctl)
+{
+  if(!left_.task || !right_.task || !leftArm_.task || !rightArm_.task)
+  {
+    experimentResetStatus_ = "start pose unavailable: missing retargetting task";
+    return;
+  }
+  experimentStartLeftHand_ = left_.task->target();
+  experimentStartRightHand_ = right_.task->target();
+  experimentStartLeftArm_ = leftArm_.task->target();
+  experimentStartRightArm_ = rightArm_.task->target();
+  if(headTask_)
+  {
+    experimentStartHead_ = headTask_->target();
+  }
+  auto posture = ctl.getPostureTask(ctl.robot().name());
+  experimentStartPosture_ = posture->posture();
+  const auto & currentQ = ctl.robot().mbc().q;
+  // Keep the posture task's floating-base entry untouched. Record measured joint
+  // coordinates so the reset target is the actual safe startup posture.
+  for(size_t joint = 1; joint < experimentStartPosture_.size() && joint < currentQ.size(); ++joint)
+  {
+    if(experimentStartPosture_[joint].size() == currentQ[joint].size())
+    {
+      experimentStartPosture_[joint] = currentQ[joint];
+    }
+  }
+  experimentStartPoseCaptured_ = true;
+  experimentResetStatus_ = "ready";
+  mc_rtc::log::success("[{}] Captured controller start pose for between-trial reset", name());
+}
+
+void ViveHandBridge::processExperimentReset(mc_control::fsm::Controller & ctl)
+{
+  if(experimentResetAbortRequested_)
+  {
+    experimentResetAbortRequested_ = false;
+    experimentResetRequested_ = false;
+    if(experimentResetActive_)
+    {
+      experimentResetActive_ = false;
+      pauseTracking();
+      experimentResetStatus_ = "aborted; holding current pose";
+      mc_rtc::log::warning("[{}] Experiment pose reset aborted", name());
+    }
+  }
+
+  if(experimentResetRequested_)
+  {
+    experimentResetRequested_ = false;
+    if(trackingStarted_)
+    {
+      experimentResetStatus_ = "rejected: pause Vive control first";
+      mc_rtc::log::warning("[{}] Reset rejected while Vive control is running", name());
+    }
+    else if(!experimentStartPoseCaptured_)
+    {
+      experimentResetStatus_ = "rejected: start pose is unavailable";
+    }
+    else if(left_.task && right_.task && leftArm_.task && rightArm_.task)
+    {
+      experimentResetFromLeftHand_ = left_.task->target();
+      experimentResetFromRightHand_ = right_.task->target();
+      experimentResetFromLeftArm_ = leftArm_.task->target();
+      experimentResetFromRightArm_ = rightArm_.task->target();
+      if(headTask_)
+      {
+        experimentResetFromHead_ = headTask_->target();
+      }
+      auto posture = ctl.getPostureTask(ctl.robot().name());
+      experimentResetFromPosture_ = posture->posture();
+      const auto & currentQ = ctl.robot().mbc().q;
+      for(size_t joint = 1; joint < experimentResetFromPosture_.size() && joint < currentQ.size(); ++joint)
+      {
+        if(experimentResetFromPosture_[joint].size() == currentQ[joint].size())
+        {
+          experimentResetFromPosture_[joint] = currentQ[joint];
+        }
+      }
+      experimentResetStartTime_ = now();
+      experimentResetProgress_ = 0.0;
+      experimentResetActive_ = true;
+      trackingPaused_ = true;
+      menuActionArmed_ = false;
+      experimentResetStatus_ = "resetting";
+      mc_rtc::log::warning("[{}] Returning robot to controller start pose over {:.1f}s", name(),
+                           experimentResetDuration_);
+    }
+  }
+
+  if(!experimentResetActive_)
+  {
+    return;
+  }
+
+  const double rawRatio = (now() - experimentResetStartTime_) / experimentResetDuration_;
+  const double ratio = std::clamp(rawRatio, 0.0, 1.0);
+  const double smoothRatio = ratio * ratio * (3.0 - 2.0 * ratio);
+  experimentResetProgress_ = ratio;
+
+  left_.zeroRobot = sva::interpolate(experimentResetFromLeftHand_, experimentStartLeftHand_, smoothRatio);
+  right_.zeroRobot = sva::interpolate(experimentResetFromRightHand_, experimentStartRightHand_, smoothRatio);
+  leftArm_.zeroRobot = sva::interpolate(experimentResetFromLeftArm_, experimentStartLeftArm_, smoothRatio);
+  rightArm_.zeroRobot = sva::interpolate(experimentResetFromRightArm_, experimentStartRightArm_, smoothRatio);
+  if(headTask_)
+  {
+    headTask_->target(sva::interpolate(experimentResetFromHead_, experimentStartHead_, smoothRatio));
+    headTask_->targetVel(sva::MotionVecd::Zero());
+  }
+  holdCurrentTargets();
+
+  auto posture = ctl.getPostureTask(ctl.robot().name());
+  if(posture && experimentResetFromPosture_.size() == experimentStartPosture_.size())
+  {
+    auto target = experimentResetFromPosture_;
+    for(size_t joint = 0; joint < target.size(); ++joint)
+    {
+      if(target[joint].size() != experimentStartPosture_[joint].size())
+      {
+        continue;
+      }
+      for(size_t dof = 0; dof < target[joint].size(); ++dof)
+      {
+        target[joint][dof] = (1.0 - smoothRatio) * experimentResetFromPosture_[joint][dof]
+                             + smoothRatio * experimentStartPosture_[joint][dof];
+      }
+    }
+    posture->posture(target);
+  }
+
+  if(ratio >= 1.0)
+  {
+    experimentResetActive_ = false;
+    experimentResetStatus_ = "complete; waiting for two-hand menu press";
+    experimentResetProgress_ = 1.0;
+    mc_rtc::log::success("[{}] Experiment pose reset complete", name());
+  }
+}
+
+std::string ViveHandBridge::controlStateName() const
+{
+  if(experimentResetActive_)
+  {
+    return "RESETTING";
+  }
+  if(trackingStarted_)
+  {
+    return "RUNNING";
+  }
+  if(trackingPaused_)
+  {
+    return "PAUSED";
+  }
+  return "READY";
 }
 
 void ViveHandBridge::clearInputHistories()
@@ -1053,6 +1213,8 @@ void ViveHandBridge::clearInputHistories()
   right_.previousReceivedResetButton = false;
   left_.resetPressPending = false;
   right_.resetPressPending = false;
+  left_.resetPressTime = -1.0;
+  right_.resetPressTime = -1.0;
   left_.previousResetButton = false;
   right_.previousResetButton = false;
   // A grip/trigger already held while a new condition is selected must not become a fresh command.
@@ -1105,6 +1267,7 @@ void ViveHandBridge::pushSample(HandState & state, const Controller & msg)
   if(msg.menu_button && !state.previousReceivedResetButton)
   {
     state.resetPressPending = true;
+    state.resetPressTime = sampleTime;
     ++state.resetPressCount;
   }
   state.previousReceivedResetButton = msg.menu_button;

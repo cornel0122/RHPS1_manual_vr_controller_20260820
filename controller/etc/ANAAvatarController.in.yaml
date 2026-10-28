@@ -1193,7 +1193,8 @@ states:
     - Avatar::Retargetting::Head
     - Avatar::Retargetting::ManualLeft
     - Avatar::Retargetting::ManualRight
-    # 该状态启动时先把四个 task 固定在机器人当前姿态；双手 menu 确认后才平滑接管。
+    # 启动时先保持四个 task；双手 menu 短按开始/继续，运行中双手长按暂停。
+    # 暂停/继续保持 direct waist-relative 映射，不建立新的手部零点。
     - ANA::ViveHandBridgeManual
 
   Avatar::Retargetting::Experiment:

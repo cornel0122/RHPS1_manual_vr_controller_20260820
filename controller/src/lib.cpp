@@ -6,7 +6,7 @@ extern "C"
   CONTROLLER_MODULE_API void MC_RTC_CONTROLLER(std::vector<std::string> & names)
   {
     CONTROLLER_CHECK_VERSION("ANAAvatarControllerRHPS1CornelVive")
-    names = {"ANAAvatarControllerRHPS1CornelVive_manual"};
+    names = {"ANAAvatarControllerRHPS1CornelVive_manual", "ANAAvatarControllerRHPS1CornelVive_experiment"};
   }
 
   CONTROLLER_MODULE_API void destroy(mc_control::MCController * ptr)
@@ -24,7 +24,8 @@ extern "C"
                                                           const double & dt,
                                                           const mc_control::Configuration & conf)
   {
-    if(name == "ANAAvatarControllerRHPS1CornelVive_manual")
+    if(name == "ANAAvatarControllerRHPS1CornelVive_manual"
+       || name == "ANAAvatarControllerRHPS1CornelVive_experiment")
     {
       return new ANAAvatarController<lipm_walking::Controller>(robot, dt, conf);
     }

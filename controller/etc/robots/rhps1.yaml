@@ -309,11 +309,16 @@ states:
     input_delay: 0
     auto_zero: true
     require_initial_two_hand_reset: true
+    # 双手 menu 短按开始/继续；运行中双手长按暂停。暂停/继续不建立新的手部零点。
+    two_hand_press_window: 0.5
+    two_hand_pause_hold_duration: 1.5
+    # GUI 组间复位返回 controller 启动时记录的实验起始姿态。
+    experiment_reset_duration: 8.0
     initial_zero_requires_arm_trackers: false
     use_waist_reference: true
     direct_waist_control: true
     direct_waist_keep_hand_side: true
-    tracking_handover_duration: 2.0
+    tracking_handover_duration: 0.0
     direct_waist_max_distance: 1.2
     robot_waist_frame: "BODY"
     left_hand_orientation_offset_rpy_deg: [0.0, 0.0, 0.0]

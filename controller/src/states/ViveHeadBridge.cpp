@@ -80,6 +80,21 @@ bool ViveHeadBridge::run(mc_control::fsm::Controller & ctl)
   rclcpp::spin_some(node_);
   selectDelayedHmd();
 
+  const std::string trackingKey = "ANA::Vive::tracking_started";
+  const bool trackingGateAvailable = ctl.datastore().has(trackingKey);
+  const bool trackingActive = !trackingGateAvailable || ctl.datastore().call<bool>(trackingKey);
+  if(!trackingActive)
+  {
+    if(task_)
+    {
+      // Do not overwrite the pose while paused: the experiment-reset path may
+      // move this same task back to the recorded controller start pose.
+      task_->targetVel(sva::MotionVecd::Zero());
+    }
+    output("OK");
+    return true;
+  }
+
   if(ctl.datastore().has(zeroRequestKey_))
   {
     auto & zeroRequested = ctl.datastore().get<bool>(zeroRequestKey_);
