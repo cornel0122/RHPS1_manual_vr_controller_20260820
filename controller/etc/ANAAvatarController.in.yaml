@@ -1139,6 +1139,8 @@ states:
     control_mujoco_adhesion: false
     gripper_profile: "@AVATAR_GRIPPER_PROFILE@"
     gripper_expected_active_joints: @AVATAR_GRIPPER_EXPECTED_ACTIVE_JOINTS@
+    left_gripper_commands_enabled: @AVATAR_LEFT_GRIPPER_COMMANDS_ENABLED@
+    right_gripper_commands_enabled: @AVATAR_RIGHT_GRIPPER_COMMANDS_ENABLED@
     # RHPS1 实体夹具：低速闭合，并用命令/编码器位置误差检测接触后停止。
     gripper_safety_enabled: true
     gripper_safety:

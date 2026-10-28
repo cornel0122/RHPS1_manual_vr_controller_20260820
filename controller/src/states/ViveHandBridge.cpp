@@ -185,6 +185,8 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
   config("right_gripper_joint", rightGripperJoint_);
   config("gripper_profile", gripperProfile_);
   config("gripper_expected_active_joints", expectedGripperActiveJoints_);
+  config("left_gripper_commands_enabled", leftGripperCommandsEnabled_);
+  config("right_gripper_commands_enabled", rightGripperCommandsEnabled_);
   config("left_robot_hand_frame", leftRobotHandFrame_);
   config("right_robot_hand_frame", rightRobotHandFrame_);
   config("open_value", openValue_);
@@ -242,10 +244,18 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
   if(controlGrippers_)
   {
     auto prepareGripper = [&](HandState & hand,
+                              bool commandsEnabled,
                               const std::string & gripperName,
                               const std::string & configuredJoint,
                               const std::string & side) {
       hand.gripperReady = false;
+      if(!commandsEnabled)
+      {
+        mc_rtc::log::info(
+            "[{}] {} gripper commands are disabled by configuration; arm retargetting and Vive menu controls remain active",
+            name(), side);
+        return;
+      }
       if(!ctl.robot().hasGripper(gripperName))
       {
         mc_rtc::log::error("[{}] {} gripper '{}' is not registered; Vive grip commands are disabled",
@@ -294,8 +304,8 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
             name(), side, gripperName, gripperProfile_, gripper.activeJoints().size());
       }
     };
-    prepareGripper(left_, leftGripper_, leftGripperJoint_, "left");
-    prepareGripper(right_, rightGripper_, rightGripperJoint_, "right");
+    prepareGripper(left_, leftGripperCommandsEnabled_, leftGripper_, leftGripperJoint_, "left");
+    prepareGripper(right_, rightGripperCommandsEnabled_, rightGripper_, rightGripperJoint_, "right");
   }
 
   mc_rtc::log::info("[{}] ViveHandBridge loaded: neutral_body_calibration={}, wrist_pivot_compensation={}, "
