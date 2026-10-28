@@ -247,8 +247,6 @@ private:
   std::string rightGripperJoint_ = "R_HAND_THUMB_J0";
   std::string gripperProfile_ = "generic";
   unsigned int expectedGripperActiveJoints_ = 0;
-  bool leftGripperCommandsEnabled_ = true;
-  bool rightGripperCommandsEnabled_ = true;
   std::string robotWaistFrame_ = "BODY";
   std::string leftRobotHandFrame_ = "LeftHand";
   std::string rightRobotHandFrame_ = "RightHand";

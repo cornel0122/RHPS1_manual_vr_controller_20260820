@@ -54,8 +54,6 @@ endif()
 # below require all 16 active joints before any Vive grip command is accepted.
 set(AVATAR_GRIPPER_PROFILE "sake2")
 set(AVATAR_GRIPPER_EXPECTED_ACTIVE_JOINTS 1)
-set(AVATAR_LEFT_GRIPPER_COMMANDS_ENABLED "true")
-set(AVATAR_RIGHT_GRIPPER_COMMANDS_ENABLED "true")
 
 set(AVATAR_INITIAL_STATE "LIPMWalking::Initial")
 set(AVATAR_INITIAL_STATE_OUTPUT "Standing")
@@ -136,8 +134,6 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_none.yaml"
 # finger open/close commands still come from the Vive grip buttons.
 set(AVATAR_GRIPPER_PROFILE "leap")
 set(AVATAR_GRIPPER_EXPECTED_ACTIVE_JOINTS 16)
-set(AVATAR_LEFT_GRIPPER_COMMANDS_ENABLED "false")
-set(AVATAR_RIGHT_GRIPPER_COMMANDS_ENABLED "true")
 set(AVATAR_INITIAL_STATE "ANA::ManualInitial")
 set(AVATAR_INITIAL_STATE_OUTPUT "Standing")
 set(AVATAR_DEMO_WALK_FSM_STATE "- ANA::WalkFSM")
@@ -148,8 +144,14 @@ set(AVATAR_DEMO_FSM_TRANSITIONS
 set(AVATAR_PLUGINS "[mocap_plugin, LEAPHandPlugin]")
 set(AVATAR_EXTRA_CONFIG [=[
 LEAPHandPlugin:
-  - name: "right_leap_hand"
+  - name: "left_leap_hand"
     usb_port: "/dev/ttyUSB0"
+    robot: "rhps1"
+    gripper: "l_gripper"
+    simulation: false
+    baudrate: 4000000
+  - name: "right_leap_hand"
+    usb_port: "/dev/ttyUSB1"
     robot: "rhps1"
     gripper: "r_gripper"
     simulation: false
