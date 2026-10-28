@@ -50,6 +50,11 @@ else()
   set(SIM_CONF "false")
 endif()
 
+# Sake2 variants use one active joint per gripper. Dedicated LEAP variants
+# below require all 16 active joints before any Vive grip command is accepted.
+set(AVATAR_GRIPPER_PROFILE "sake2")
+set(AVATAR_GRIPPER_EXPECTED_ACTIVE_JOINTS 1)
+
 set(AVATAR_INITIAL_STATE "LIPMWalking::Initial")
 set(AVATAR_INITIAL_STATE_OUTPUT "Standing")
 set(AVATAR_DEMO_WALK_FSM_STATE "- ANA::WalkFSM")
@@ -123,8 +128,52 @@ configure_file(etc/ANAAvatarController.in.yaml
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_none.yaml"
         DESTINATION "${MC_CONTROLLER_INSTALL_PREFIX}/etc")
 
+# Physical RHPS1 with two LEAP Hands. Arm/head retargeting, experiment delay,
+# shared autonomy, pause/resume and between-trial reset remain unchanged.
+# LEAPHandPlugin only transports mc_rtc gripper commands to the hardware;
+# finger open/close commands still come from the Vive grip buttons.
+set(AVATAR_GRIPPER_PROFILE "leap")
+set(AVATAR_GRIPPER_EXPECTED_ACTIVE_JOINTS 16)
+set(AVATAR_INITIAL_STATE "ANA::ManualInitial")
+set(AVATAR_INITIAL_STATE_OUTPUT "Standing")
+set(AVATAR_DEMO_WALK_FSM_STATE "- ANA::WalkFSM")
+set(AVATAR_RETARGETTING_STATE "Avatar::Retargetting::Manual")
+set(AVATAR_DEMO_STATE "ANA::ManualDemo")
+set(AVATAR_DEMO_FSM_TRANSITIONS
+    "      - [Pause, OK, Avatar::Retargetting::Manual, Auto]")
+set(AVATAR_PLUGINS "[mocap_plugin, LEAPHandPlugin]")
+set(AVATAR_EXTRA_CONFIG [=[
+LEAPHandPlugin:
+  - name: "left_leap_hand"
+    usb_port: "/dev/ttyUSB0"
+    robot: "rhps1"
+    gripper: "l_gripper"
+    simulation: false
+    baudrate: 4000000
+  - name: "right_leap_hand"
+    usb_port: "/dev/ttyUSB1"
+    robot: "rhps1"
+    gripper: "r_gripper"
+    simulation: false
+    baudrate: 4000000
+]=])
+configure_file(etc/ANAAvatarController.in.yaml
+               "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_leap_manual.yaml")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_leap_manual.yaml"
+        DESTINATION "${MC_CONTROLLER_INSTALL_PREFIX}/etc")
+
+set(AVATAR_RETARGETTING_STATE "Avatar::Retargetting::Experiment")
+set(AVATAR_DEMO_STATE "ANA::ExperimentDemo")
+set(AVATAR_DEMO_FSM_TRANSITIONS
+    "      - [Pause, OK, Avatar::Retargetting::Experiment, Auto]")
+set(AVATAR_PLUGINS "[LEAPHandPlugin]")
+configure_file(etc/ANAAvatarController.in.yaml
+               "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_leap_experiment.yaml")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_leap_experiment.yaml"
+        DESTINATION "${MC_CONTROLLER_INSTALL_PREFIX}/etc")
+
 # 本机安装的 ISMPC 接口早于工程师分支；当前融合只构建实际需要的 LIPM 与无行走版本。
-set(VARIANTS lipm manual experiment none)
+set(VARIANTS lipm manual experiment none leap_manual leap_experiment)
 set(ROBOTS rhps1 hrp4j hrp4cr hrp4)
 foreach(VARIANT ${VARIANTS})
   if(${VARIANT} STREQUAL "lipm")

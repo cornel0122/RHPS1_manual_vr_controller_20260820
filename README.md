@@ -8,6 +8,8 @@ controller 冲突，使用独立名称：
 ```text
 ANAAvatarControllerRHPS1CornelVive_manual
 ANAAvatarControllerRHPS1CornelVive_experiment
+ANAAvatarControllerRHPS1CornelVive_leap_manual
+ANAAvatarControllerRHPS1CornelVive_leap_experiment
 ```
 
 对应的 superbuild project target 为：
@@ -29,6 +31,12 @@ MC Control 运行中切换四种条件，不需要重启机器人。Vive 操作�
 - `Avatar -> Experiment Reset` 仅在暂停时允许机器人用 8 秒返回 controller 启动时记录的实验起始姿态。
 
 详细流程见 `docs/Cornel_Vive暂停与组间复位_20261028.md`。
+
+双 LEAP Hands 实体版本使用 `MainRobot: RHPS1_leap_leap`，并选择名称带
+`_leap_manual` 或 `_leap_experiment` 的 controller。它保留相同的 VIVE
+手臂控制、暂停/继续、实验条件与组间复位功能；`grip` 通过
+`LEAPHandPlugin` 控制整手开合。部署和首次测试见
+`docs/Cornel_RHPS1双LEAP手部署_20261028.md`。
 
 本目录用于把 RHPS1 的 Vive 手动遥操作控制器从 Operator PC 搬运到实验室 Control PC，
 并提供一套不必重新编译即可切换四种实验条件的真机实验 controller。

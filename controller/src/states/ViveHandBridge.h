@@ -74,6 +74,7 @@ private:
     bool previousResetButton = false;
     bool previousGripperButton = false;
     bool previousGraspNotificationButton = false;
+    bool gripperReady = false;
     bool gripperClosed = false;
     bool gripperCommandActive = false;
     Eigen::Vector3d zeroVive = Eigen::Vector3d::Zero();
@@ -244,6 +245,8 @@ private:
   std::string rightGripper_ = "r_gripper";
   std::string leftGripperJoint_ = "L_HAND_THUMB_J0";
   std::string rightGripperJoint_ = "R_HAND_THUMB_J0";
+  std::string gripperProfile_ = "generic";
+  unsigned int expectedGripperActiveJoints_ = 0;
   std::string robotWaistFrame_ = "BODY";
   std::string leftRobotHandFrame_ = "LeftHand";
   std::string rightRobotHandFrame_ = "RightHand";

@@ -183,6 +183,8 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
   config("right_gripper", rightGripper_);
   config("left_gripper_joint", leftGripperJoint_);
   config("right_gripper_joint", rightGripperJoint_);
+  config("gripper_profile", gripperProfile_);
+  config("gripper_expected_active_joints", expectedGripperActiveJoints_);
   config("left_robot_hand_frame", leftRobotHandFrame_);
   config("right_robot_hand_frame", rightRobotHandFrame_);
   config("open_value", openValue_);
@@ -237,14 +239,17 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
     robotConfig("closed_value", closedValue_);
   }
 
-  if(controlGrippers_ && gripperSafetyEnabled_)
+  if(controlGrippers_)
   {
-    auto applyGripperSafety = [&](const std::string & gripperName, const std::string & side) {
+    auto prepareGripper = [&](HandState & hand,
+                              const std::string & gripperName,
+                              const std::string & configuredJoint,
+                              const std::string & side) {
+      hand.gripperReady = false;
       if(!ctl.robot().hasGripper(gripperName))
       {
-        mc_rtc::log::warning(
-            "[{}] {} gripper '{}' is not registered; skipping manual gripper safety configuration",
-            name(), side, gripperName);
+        mc_rtc::log::error("[{}] {} gripper '{}' is not registered; Vive grip commands are disabled",
+                           name(), side, gripperName);
         return;
       }
       auto & gripper = ctl.robot().gripper(gripperName);
@@ -255,24 +260,42 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
             name(), side, gripperName);
         return;
       }
-      if(!gripper.hasActiveJoint(side == "left" ? leftGripperJoint_ : rightGripperJoint_))
+      if(expectedGripperActiveJoints_ > 0
+         && gripper.activeJoints().size() != static_cast<size_t>(expectedGripperActiveJoints_))
       {
-        mc_rtc::log::warning(
-            "[{}] {} gripper '{}' does not contain configured active joint '{}'; "
-            "whole-gripper commands will control all RobotModule active joints instead",
-            name(), side, gripperName, side == "left" ? leftGripperJoint_ : rightGripperJoint_);
+        mc_rtc::log::error(
+            "[{}] {} gripper '{}' profile '{}' expects {} active joint(s), but RobotModule registered {}; "
+            "Vive grip commands are disabled",
+            name(), side, gripperName, gripperProfile_, expectedGripperActiveJoints_, gripper.activeJoints().size());
       }
-      gripper.actualCommandDiffTrigger(mc_rtc::constants::toRad(gripperSafetyThresholdDeg_));
-      gripper.overCommandLimitIterN(static_cast<unsigned int>(gripperSafetyIterations_));
-      gripper.releaseSafetyOffset(mc_rtc::constants::toRad(gripperSafetyReleaseDeg_));
-      gripper.percentVMAX(gripperSafetyVmaxPercent_);
-      mc_rtc::log::info(
-          "[{}] {} gripper safety: threshold={:.1f}deg, iter={}, release={:.1f}deg, vmax={:.1f}%",
-          name(), side, gripperSafetyThresholdDeg_, gripperSafetyIterations_, gripperSafetyReleaseDeg_,
-          100.0 * gripperSafetyVmaxPercent_);
+      else
+      {
+        if(!gripper.hasActiveJoint(configuredJoint))
+        {
+          mc_rtc::log::info(
+              "[{}] {} gripper '{}' does not contain legacy joint '{}'; whole-gripper commands will control "
+              "all {} RobotModule active joints",
+              name(), side, gripperName, configuredJoint, gripper.activeJoints().size());
+        }
+        if(gripperSafetyEnabled_)
+        {
+          gripper.actualCommandDiffTrigger(mc_rtc::constants::toRad(gripperSafetyThresholdDeg_));
+          gripper.overCommandLimitIterN(static_cast<unsigned int>(gripperSafetyIterations_));
+          gripper.releaseSafetyOffset(mc_rtc::constants::toRad(gripperSafetyReleaseDeg_));
+          gripper.percentVMAX(gripperSafetyVmaxPercent_);
+          mc_rtc::log::info(
+              "[{}] {} gripper safety: threshold={:.1f}deg, iter={}, release={:.1f}deg, vmax={:.1f}%",
+              name(), side, gripperSafetyThresholdDeg_, gripperSafetyIterations_, gripperSafetyReleaseDeg_,
+              100.0 * gripperSafetyVmaxPercent_);
+        }
+        hand.gripperReady = true;
+        mc_rtc::log::success(
+            "[{}] {} gripper '{}' ready: profile={}, active_joints={}, Vive grip toggles open/close",
+            name(), side, gripperName, gripperProfile_, gripper.activeJoints().size());
+      }
     };
-    applyGripperSafety(leftGripper_, "left");
-    applyGripperSafety(rightGripper_, "right");
+    prepareGripper(left_, leftGripper_, leftGripperJoint_, "left");
+    prepareGripper(right_, rightGripper_, rightGripperJoint_, "right");
   }
 
   mc_rtc::log::info("[{}] ViveHandBridge loaded: neutral_body_calibration={}, wrist_pivot_compensation={}, "
@@ -2253,7 +2276,7 @@ void ViveHandBridge::updateGrippers(mc_control::fsm::Controller & ctl)
   // 第一次 grip 上升沿之前不发送任何夹具目标，避免 controller 启动时夹具自行张开。
   // 使用整夹具 opening 接口，让 RobotModule 决定所有主动/从动关节的正确联动。
   auto update = [&](const HandState & hand, const std::string & gripperName) {
-    if(!hand.hasData || !hand.gripperCommandActive || !ctl.robot().hasGripper(gripperName))
+    if(!hand.hasData || !hand.gripperReady || !hand.gripperCommandActive || !ctl.robot().hasGripper(gripperName))
     {
       return;
     }
