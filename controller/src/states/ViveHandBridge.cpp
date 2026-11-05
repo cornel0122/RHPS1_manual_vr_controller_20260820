@@ -123,6 +123,7 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
   config("experiment_condition_required", experimentConditionRequired_);
   config("experiment_rearm_on_command", experimentRearmOnCommand_);
   config("experiment_condition_topic", experimentCommandTopic_);
+  config("control_mode_topic", controlModeTopic_);
   config("experiment_delayed_input_seconds", experimentDelayedInputSeconds_);
   experimentDelayedInputSeconds_ = std::max(0.0, experimentDelayedInputSeconds_);
   config("auto_zero", autoZero_);
@@ -339,6 +340,10 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
 
   node_ = std::make_shared<rclcpp::Node>("ana_vive_hand_bridge");
   graspEventPub_ = node_->create_publisher<std_msgs::msg::String>(graspEventTopic_, 10);
+  auto controlModeQos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
+  controlModeSub_ = node_->create_subscription<std_msgs::msg::String>(
+      controlModeTopic_, controlModeQos,
+      [this](const std_msgs::msg::String::SharedPtr msg) { onControlModeCommand(msg); });
   if(experimentConditionEnabled_)
   {
     auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
@@ -613,6 +618,7 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
 bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
 {
   rclcpp::spin_some(node_);
+  applyPendingControlModeCommand();
   applyPendingExperimentCommand(ctl);
   updateDelayedInputs();
 
@@ -783,6 +789,7 @@ void ViveHandBridge::teardown(mc_control::fsm::Controller & ctl)
   adhesionPub_.reset();
   graspEventPub_.reset();
   experimentCommandSub_.reset();
+  controlModeSub_.reset();
   node_.reset();
   if(ownsRclcpp_)
   {
@@ -916,6 +923,44 @@ void ViveHandBridge::onExperimentCommand(const std_msgs::msg::String::SharedPtr 
   pendingExperimentCommand_ = true;
 }
 
+void ViveHandBridge::onControlModeCommand(const std_msgs::msg::String::SharedPtr msg)
+{
+  std::string mode = msg->data;
+  std::transform(mode.begin(), mode.end(), mode.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  mode.erase(0, mode.find_first_not_of(" \t\r\n"));
+  const auto last = mode.find_last_not_of(" \t\r\n");
+  if(last != std::string::npos) { mode.erase(last + 1); }
+  if(mode != "both" && mode != "left" && mode != "right")
+  {
+    mc_rtc::log::warning("[{}] Ignoring invalid Vive control mode '{}'; expected both, left or right", name(),
+                         msg->data);
+    return;
+  }
+  if(mode == activeSide_ || (pendingControlModeCommand_ && mode == pendingControlMode_)) { return; }
+  pendingControlMode_ = mode;
+  pendingControlModeCommand_ = true;
+}
+
+void ViveHandBridge::applyPendingControlModeCommand()
+{
+  if(!pendingControlModeCommand_) { return; }
+  if(trackingStarted_)
+  {
+    mc_rtc::log::warning("[{}] Rejecting Vive control mode change {} -> {} while tracking is RUNNING; pause first",
+                         name(), activeSide_, pendingControlMode_);
+    pendingControlModeCommand_ = false;
+    return;
+  }
+
+  const std::string previous = activeSide_;
+  activeSide_ = pendingControlMode_;
+  pendingControlModeCommand_ = false;
+  holdAndRearmTracking();
+  mc_rtc::log::success("[{}] Vive control mode changed {} -> {}; waiting for fresh required device data and menu",
+                       name(), previous, activeSide_);
+}
+
 void ViveHandBridge::applyPendingExperimentCommand(mc_control::fsm::Controller & ctl)
 {
   if(!experimentConditionEnabled_ || !pendingExperimentCommand_)
@@ -998,7 +1043,8 @@ bool ViveHandBridge::startOrResumeTracking(mc_control::fsm::Controller & ctl)
 {
   const bool experimentReady = !experimentConditionRequired_ || experimentConditionReceived_;
   const bool waistReady = !useWaistReference_ || waist_.hasData;
-  const bool armsReady = !initialZeroRequiresArmTrackers_
+  const bool requireActiveArmTrackers = initialZeroRequiresArmTrackers_ || activeSide_ != "both";
+  const bool armsReady = !requireActiveArmTrackers
                          || ((!leftEnabled() || leftArm_.hasData) && (!rightEnabled() || rightArm_.hasData));
   const bool handsReady = (!leftEnabled() || (left_.hasData && left_.task))
                           && (!rightEnabled() || (right_.hasData && right_.task));

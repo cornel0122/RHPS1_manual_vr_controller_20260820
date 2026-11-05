@@ -117,7 +117,9 @@ private:
   void onAnyController(const std::string & topic, const Controller::SharedPtr msg);
   void onAnyTracker(const std::string & topic, const Tracker::SharedPtr msg);
   void onExperimentCommand(const std_msgs::msg::String::SharedPtr msg);
+  void onControlModeCommand(const std_msgs::msg::String::SharedPtr msg);
   void applyPendingExperimentCommand(mc_control::fsm::Controller & ctl);
+  void applyPendingControlModeCommand();
   void holdAndRearmTracking();
   void holdCurrentTargets();
   bool startOrResumeTracking(mc_control::fsm::Controller & ctl);
@@ -238,6 +240,7 @@ private:
   rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr adhesionPub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr graspEventPub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr experimentCommandSub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr controlModeSub_;
 
   std::string leftTaskName_ = "ANA::LeftHandRetargetingTask";
   std::string rightTaskName_ = "ANA::RightHandRetargetingTask";
@@ -286,6 +289,9 @@ private:
   int pendingExperimentCondition_ = 0;
   double experimentDelayedInputSeconds_ = 1.5;
   std::string experimentCommandTopic_ = "/ana/experiment_condition";
+  std::string controlModeTopic_ = "/ana/vive_control_mode";
+  std::string pendingControlMode_ = "both";
+  bool pendingControlModeCommand_ = false;
   std::string experimentSessionId_ = "none";
   std::string pendingExperimentSessionId_ = "none";
   std::string experimentConditionName_ = "not configured";

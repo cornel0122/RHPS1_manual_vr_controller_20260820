@@ -12,5 +12,33 @@ if [[ ! -f "$VIVE_ROS_SETUP" ]]; then
 fi
 source "$VIVE_ROS_SETUP"
 
-echo "RHPS1 Vive: domain=$ROS_DOMAIN_ID, rmw=$RMW_IMPLEMENTATION"
-exec ros2 run vr_interface_node talker "$@"
+CONTROL_MODE="${RHPS1_VIVE_CONTROL_MODE:-both}"
+if [[ "${1:-}" == "--control-mode" ]]; then
+  if [[ $# -lt 2 ]]; then
+    echo "Usage: $0 [--control-mode both|left|right] [talker arguments...]" >&2
+    exit 2
+  fi
+  CONTROL_MODE="$2"
+  shift 2
+fi
+
+case "$CONTROL_MODE" in
+  both|left|right) ;;
+  *)
+    echo "Invalid Vive control mode: $CONTROL_MODE (expected both, left or right)" >&2
+    exit 2
+    ;;
+esac
+
+echo "RHPS1 Vive: domain=$ROS_DOMAIN_ID, rmw=$RMW_IMPLEMENTATION, control_mode=$CONTROL_MODE"
+ros2 topic pub -r 1 --qos-reliability reliable --qos-durability transient_local \
+  /ana/vive_control_mode std_msgs/msg/String "{data: '$CONTROL_MODE'}" >/dev/null &
+MODE_PUBLISHER_PID=$!
+cleanup()
+{
+  kill "$MODE_PUBLISHER_PID" 2>/dev/null || true
+  wait "$MODE_PUBLISHER_PID" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+ros2 run vr_interface_node talker "$@"

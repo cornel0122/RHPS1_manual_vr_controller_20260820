@@ -54,7 +54,6 @@ endif()
 # below require all 16 active joints before any Vive grip command is accepted.
 set(AVATAR_GRIPPER_PROFILE "sake2")
 set(AVATAR_GRIPPER_EXPECTED_ACTIVE_JOINTS 1)
-set(AVATAR_MANUAL_RETARGETTING_STATE "Avatar::Retargetting::Manual")
 
 set(AVATAR_INITIAL_STATE "LIPMWalking::Initial")
 set(AVATAR_INITIAL_STATE_OUTPUT "Standing")
@@ -92,21 +91,6 @@ configure_file(etc/ANAAvatarController.in.yaml
                "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_manual.yaml")
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_manual.yaml"
         DESTINATION "${MC_CONTROLLER_INSTALL_PREFIX}/etc")
-
-# 单侧轻装测试版本。只要求腰部 tracker、所选侧 arm tracker 和所选侧手柄。
-set(AVATAR_MANUAL_RETARGETTING_STATE "Avatar::Retargetting::LeftTest")
-configure_file(etc/ANAAvatarController.in.yaml
-               "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_left_test.yaml")
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_left_test.yaml"
-        DESTINATION "${MC_CONTROLLER_INSTALL_PREFIX}/etc")
-
-set(AVATAR_MANUAL_RETARGETTING_STATE "Avatar::Retargetting::RightTest")
-configure_file(etc/ANAAvatarController.in.yaml
-               "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_right_test.yaml")
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_right_test.yaml"
-        DESTINATION "${MC_CONTROLLER_INSTALL_PREFIX}/etc")
-
-set(AVATAR_MANUAL_RETARGETTING_STATE "Avatar::Retargetting::Manual")
 
 # 实体 RHPS1 的四条件实验版本。Control PC 始终加载这一套 controller；
 # Operator PC 通过 ROS 2 在运行时选择 0/1.5 秒延迟和辅助开/关。
@@ -178,67 +162,18 @@ configure_file(etc/ANAAvatarController.in.yaml
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_leap_manual.yaml"
         DESTINATION "${MC_CONTROLLER_INSTALL_PREFIX}/etc")
 
-# 单侧 LEAP 测试只加载并驱动所选侧硬件插件；另一侧物理手可以不安装。
-set(AVATAR_MANUAL_RETARGETTING_STATE "Avatar::Retargetting::LeftTest")
-set(AVATAR_PLUGINS "[mocap_plugin, LEAPHandPlugin]")
-set(AVATAR_EXTRA_CONFIG [=[
-LEAPHandPlugin:
-  - name: "left_leap_hand"
-    usb_port: "/dev/ttyUSB0"
-    robot: "rhps1"
-    gripper: "l_gripper"
-    simulation: false
-    baudrate: 4000000
-]=])
-configure_file(etc/ANAAvatarController.in.yaml
-               "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_leap_left_test.yaml")
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_leap_left_test.yaml"
-        DESTINATION "${MC_CONTROLLER_INSTALL_PREFIX}/etc")
-
-set(AVATAR_MANUAL_RETARGETTING_STATE "Avatar::Retargetting::RightTest")
-set(AVATAR_EXTRA_CONFIG [=[
-LEAPHandPlugin:
-  - name: "right_leap_hand"
-    usb_port: "/dev/ttyUSB1"
-    robot: "rhps1"
-    gripper: "r_gripper"
-    simulation: false
-    baudrate: 4000000
-]=])
-configure_file(etc/ANAAvatarController.in.yaml
-               "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_leap_right_test.yaml")
-install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_leap_right_test.yaml"
-        DESTINATION "${MC_CONTROLLER_INSTALL_PREFIX}/etc")
-
-set(AVATAR_MANUAL_RETARGETTING_STATE "Avatar::Retargetting::Manual")
-
 set(AVATAR_RETARGETTING_STATE "Avatar::Retargetting::Experiment")
 set(AVATAR_DEMO_STATE "ANA::ExperimentDemo")
 set(AVATAR_DEMO_FSM_TRANSITIONS
     "      - [Pause, OK, Avatar::Retargetting::Experiment, Auto]")
 set(AVATAR_PLUGINS "[LEAPHandPlugin]")
-set(AVATAR_EXTRA_CONFIG [=[
-LEAPHandPlugin:
-  - name: "left_leap_hand"
-    usb_port: "/dev/ttyUSB0"
-    robot: "rhps1"
-    gripper: "l_gripper"
-    simulation: false
-    baudrate: 4000000
-  - name: "right_leap_hand"
-    usb_port: "/dev/ttyUSB1"
-    robot: "rhps1"
-    gripper: "r_gripper"
-    simulation: false
-    baudrate: 4000000
-]=])
 configure_file(etc/ANAAvatarController.in.yaml
                "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_leap_experiment.yaml")
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_leap_experiment.yaml"
         DESTINATION "${MC_CONTROLLER_INSTALL_PREFIX}/etc")
 
 # 本机安装的 ISMPC 接口早于工程师分支；当前融合只构建实际需要的 LIPM 与无行走版本。
-set(VARIANTS lipm manual left_test right_test experiment none leap_manual leap_left_test leap_right_test leap_experiment)
+set(VARIANTS lipm manual experiment none leap_manual leap_experiment)
 set(ROBOTS rhps1 hrp4j hrp4cr hrp4)
 foreach(VARIANT ${VARIANTS})
   if(${VARIANT} STREQUAL "lipm")
