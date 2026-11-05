@@ -1160,6 +1160,18 @@ states:
     experiment_condition_topic: "/ana/experiment_condition"
     experiment_delayed_input_seconds: 1.5
 
+  # 轻装单侧测试：另一侧手柄、arm tracker 和 retargetting task 均非必需。
+  # 单侧 menu 短按开始/继续、长按暂停，grip 只控制该侧夹具。
+  ANA::ViveHandBridgeLeftTest:
+    base: ANA::ViveHandBridgeManual
+    active_side: "left"
+    initial_zero_requires_arm_trackers: true
+
+  ANA::ViveHandBridgeRightTest:
+    base: ANA::ViveHandBridgeManual
+    active_side: "right"
+    initial_zero_requires_arm_trackers: true
+
   # HMD rotation follows the same runtime condition as the hand/arm input.
   # Camera images remain on the independent ZED/overlay path and are never delayed here.
   ANA::ViveHeadBridgeExperiment:
@@ -1198,6 +1210,22 @@ states:
     # 启动时先保持四个 task；双手 menu 短按开始/继续，运行中双手长按暂停。
     # 暂停/继续保持 direct waist-relative 映射，不建立新的手部零点。
     - ANA::ViveHandBridgeManual
+
+  Avatar::Retargetting::LeftTest:
+    base: Parallel
+    states:
+    - ANA::ROSInputState
+    - ANA::RetargetingReference
+    - Avatar::Retargetting::ManualLeft
+    - ANA::ViveHandBridgeLeftTest
+
+  Avatar::Retargetting::RightTest:
+    base: Parallel
+    states:
+    - ANA::ROSInputState
+    - ANA::RetargetingReference
+    - Avatar::Retargetting::ManualRight
+    - ANA::ViveHandBridgeRightTest
 
   Avatar::Retargetting::Experiment:
     base: Parallel
@@ -1257,7 +1285,7 @@ states:
   ANA::ManualDemoFSM:
     base: Meta
     transitions:
-      - [Pause, OK, Avatar::Retargetting::Manual, Auto]
+      - [Pause, OK, @AVATAR_MANUAL_RETARGETTING_STATE@, Auto]
     configs:
       Pause:
         duration: 2

@@ -179,6 +179,8 @@ private:
   void publishGraspEvent(const std::string & hand, const std::string & event, double triggerValue);
   bool resetPressed(HandState & hand) const;
   bool gripperPressed(HandState & hand) const;
+  bool leftEnabled() const;
+  bool rightEnabled() const;
 
 private:
   std::shared_ptr<rclcpp::Node> node_;
@@ -188,6 +190,7 @@ private:
   bool autoZeroDone_ = false;
   bool requireInitialTwoHandReset_ = true;
   bool initialZeroRequiresArmTrackers_ = true;
+  std::string activeSide_ = "both";
   bool trackingStarted_ = false;
   bool trackingEverStarted_ = false;
   bool trackingPaused_ = false;

@@ -7,7 +7,9 @@
 #include <mc_rtc/logging.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <stdexcept>
 
 void ViveHandBridge::configure(const mc_rtc::Configuration & config)
 {
@@ -126,6 +128,14 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
   config("auto_zero", autoZero_);
   config("require_initial_two_hand_reset", requireInitialTwoHandReset_);
   config("initial_zero_requires_arm_trackers", initialZeroRequiresArmTrackers_);
+  config("active_side", activeSide_);
+  std::transform(activeSide_.begin(), activeSide_.end(), activeSide_.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  if(activeSide_ != "both" && activeSide_ != "left" && activeSide_ != "right")
+  {
+    mc_rtc::log::error_and_throw<std::runtime_error>(
+        "[{}] Invalid active_side '{}'; expected both, left or right", name(), activeSide_);
+  }
   config("control_grippers", controlGrippers_);
   config("control_mujoco_adhesion", controlMujocoAdhesion_);
   config("control_hand_orientation", controlHandOrientation_);
@@ -294,8 +304,8 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
             name(), side, gripperName, gripperProfile_, gripper.activeJoints().size());
       }
     };
-    prepareGripper(left_, leftGripper_, leftGripperJoint_, "left");
-    prepareGripper(right_, rightGripper_, rightGripperJoint_, "right");
+    if(leftEnabled()) { prepareGripper(left_, leftGripper_, leftGripperJoint_, "left"); }
+    if(rightEnabled()) { prepareGripper(right_, rightGripper_, rightGripperJoint_, "right"); }
   }
 
   mc_rtc::log::info("[{}] ViveHandBridge loaded: neutral_body_calibration={}, wrist_pivot_compensation={}, "
@@ -359,20 +369,20 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
         node_->create_publisher<geometry_msgs::msg::AccelStamped>("avatar/right_arm/velocity", 1);
   }
 
-  if(ctl.datastore().has(leftTaskName_))
+  if(leftEnabled() && ctl.datastore().has(leftTaskName_))
   {
     left_.task = ctl.datastore().get<std::shared_ptr<mc_tasks::ForceConstrainedTransformTask>>(leftTaskName_);
   }
-  else
+  else if(leftEnabled())
   {
     mc_rtc::log::warning("[{}] Missing datastore task {}", name(), leftTaskName_);
   }
 
-  if(ctl.datastore().has(rightTaskName_))
+  if(rightEnabled() && ctl.datastore().has(rightTaskName_))
   {
     right_.task = ctl.datastore().get<std::shared_ptr<mc_tasks::ForceConstrainedTransformTask>>(rightTaskName_);
   }
-  else
+  else if(rightEnabled())
   {
     mc_rtc::log::warning("[{}] Missing datastore task {}", name(), rightTaskName_);
   }
@@ -406,20 +416,20 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
                          rightRobotHandFrame_);
   }
 
-  if(ctl.datastore().has(leftArmTaskName_))
+  if(leftEnabled() && ctl.datastore().has(leftArmTaskName_))
   {
     leftArm_.task = ctl.datastore().get<std::shared_ptr<mc_tasks::TransformTask>>(leftArmTaskName_);
   }
-  else
+  else if(leftEnabled())
   {
     mc_rtc::log::warning("[{}] Missing datastore task {}", name(), leftArmTaskName_);
   }
 
-  if(ctl.datastore().has(rightArmTaskName_))
+  if(rightEnabled() && ctl.datastore().has(rightArmTaskName_))
   {
     rightArm_.task = ctl.datastore().get<std::shared_ptr<mc_tasks::TransformTask>>(rightArmTaskName_);
   }
-  else
+  else if(rightEnabled())
   {
     mc_rtc::log::warning("[{}] Missing datastore task {}", name(), rightArmTaskName_);
   }
@@ -500,8 +510,9 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
   ctl.gui()->addElement(
       this, {"Avatar", "Vive"},
       mc_rtc::gui::Label("Control state", [this]() { return controlStateName(); }),
+      mc_rtc::gui::Label("Active side", [this]() -> const std::string & { return activeSide_; }),
       mc_rtc::gui::Label("Tracking started", [this]() { return trackingStarted_; }),
-      mc_rtc::gui::Label("Both-menu hold [s]", [this]() { return bothMenuHoldProgress_; }),
+      mc_rtc::gui::Label("Pause menu hold [s]", [this]() { return bothMenuHoldProgress_; }),
       mc_rtc::gui::Label("Start/resume count", [this]() { return std::to_string(startResumeCount_); }),
       mc_rtc::gui::Label("Pause count", [this]() { return std::to_string(pauseCount_); }),
       mc_rtc::gui::Label("Experiment condition received", [this]() { return experimentConditionReceived_; }),
@@ -605,15 +616,16 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
   applyPendingExperimentCommand(ctl);
   updateDelayedInputs();
 
-  const bool leftReset = resetPressed(left_);
-  const bool rightReset = resetPressed(right_);
+  const bool leftReset = leftEnabled() && resetPressed(left_);
+  const bool rightReset = rightEnabled() && resetPressed(right_);
   // ROS may deliver both the press and release during one spin_some(). Consume the
   // callback-level latch so that a short menu press cannot disappear between cycles.
   const bool leftResetRising = left_.resetPressPending || (leftReset && !left_.previousResetButton);
   const bool rightResetRising = right_.resetPressPending || (rightReset && !right_.previousResetButton);
   left_.resetPressPending = false;
   right_.resetPressPending = false;
-  if(!leftReset && !rightReset)
+  const bool activeMenuReleased = (!leftEnabled() || !leftReset) && (!rightEnabled() || !rightReset);
+  if(activeMenuReleased)
   {
     menuActionArmed_ = true;
     bothMenuHoldStartTime_ = -1.0;
@@ -632,11 +644,16 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
   const bool simultaneousPress =
       left_.resetPressTime >= 0.0 && right_.resetPressTime >= 0.0
       && std::abs(left_.resetPressTime - right_.resetPressTime) <= twoHandPressWindow_;
-  const bool startChord = menuActionArmed_ && simultaneousPress && (leftResetRising || rightResetRising);
+  const bool singleSidePress = (leftEnabled() && !rightEnabled() && leftResetRising)
+                               || (rightEnabled() && !leftEnabled() && rightResetRising);
+  const bool startChord = menuActionArmed_ && (activeSide_ == "both" ?
+                                                   (simultaneousPress && (leftResetRising || rightResetRising)) :
+                                                   singleSidePress);
 
   if(trackingStarted_)
   {
-    if(menuActionArmed_ && leftReset && rightReset)
+    const bool holdChord = activeSide_ == "both" ? (leftReset && rightReset) : (leftReset || rightReset);
+    if(menuActionArmed_ && holdChord)
     {
       if(bothMenuHoldStartTime_ < 0.0)
       {
@@ -661,8 +678,8 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
   {
     if(startOrResumeTracking(ctl))
     {
-      initialLeftResetSeen_ = true;
-      initialRightResetSeen_ = true;
+      initialLeftResetSeen_ = leftEnabled();
+      initialRightResetSeen_ = rightEnabled();
       menuActionArmed_ = false;
       ++startResumeCount_;
     }
@@ -680,14 +697,14 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
 
   const bool leftGripper = gripperPressed(left_);
   const bool rightGripper = gripperPressed(right_);
-  if(!leftReset && leftGripper && !left_.previousGripperButton)
+  if(leftEnabled() && !leftReset && leftGripper && !left_.previousGripperButton)
   {
     left_.gripperCommandActive = true;
     left_.gripperClosed = !left_.gripperClosed;
     mc_rtc::log::info("[{}] Left gripper {}", name(), left_.gripperClosed ? "closed" : "open");
     publishGraspEvent("left", left_.gripperClosed ? "gripper_closed" : "gripper_opened", left_.latest.trigger);
   }
-  if(!rightReset && rightGripper && !right_.previousGripperButton)
+  if(rightEnabled() && !rightReset && rightGripper && !right_.previousGripperButton)
   {
     right_.gripperCommandActive = true;
     right_.gripperClosed = !right_.gripperClosed;
@@ -713,10 +730,16 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
   left_.previousGraspNotificationButton = leftGraspNotification;
   right_.previousGraspNotificationButton = rightGraspNotification;
 
-  updateHand(ctl, left_);
-  updateHand(ctl, right_);
-  updateArm(ctl, leftArm_);
-  updateArm(ctl, rightArm_);
+  if(leftEnabled())
+  {
+    updateHand(ctl, left_);
+    updateArm(ctl, leftArm_);
+  }
+  if(rightEnabled())
+  {
+    updateHand(ctl, right_);
+    updateArm(ctl, rightArm_);
+  }
   updateGrippers(ctl);
   publishAdhesionCommand();
 
@@ -975,8 +998,10 @@ bool ViveHandBridge::startOrResumeTracking(mc_control::fsm::Controller & ctl)
 {
   const bool experimentReady = !experimentConditionRequired_ || experimentConditionReceived_;
   const bool waistReady = !useWaistReference_ || waist_.hasData;
-  const bool armsReady = !initialZeroRequiresArmTrackers_ || (leftArm_.hasData && rightArm_.hasData);
-  const bool handsReady = left_.hasData && right_.hasData && left_.task && right_.task;
+  const bool armsReady = !initialZeroRequiresArmTrackers_
+                         || ((!leftEnabled() || leftArm_.hasData) && (!rightEnabled() || rightArm_.hasData));
+  const bool handsReady = (!leftEnabled() || (left_.hasData && left_.task))
+                          && (!rightEnabled() || (right_.hasData && right_.task));
   if(!experimentReady || !waistReady || !armsReady || !handsReady)
   {
     if(!initialWaitingForDataLogged_)
@@ -992,7 +1017,7 @@ bool ViveHandBridge::startOrResumeTracking(mc_control::fsm::Controller & ctl)
   if(!directWaistControl_ && firstStart)
   {
     setZero(ctl);
-    if(!left_.zeroed || !right_.zeroed)
+    if((leftEnabled() && !left_.zeroed) || (rightEnabled() && !right_.zeroed))
     {
       return false;
     }
@@ -1713,10 +1738,16 @@ void ViveHandBridge::setZero(mc_control::fsm::Controller &)
     hand.zeroed = true;
     mc_rtc::log::success("[{}] Zeroed {} hand", name(), label);
   };
-  zeroHand(left_, "left");
-  zeroHand(right_, "right");
-  zeroTracker(leftArm_, "left arm", true);
-  zeroTracker(rightArm_, "right arm", true);
+  if(leftEnabled())
+  {
+    zeroHand(left_, "left");
+    zeroTracker(leftArm_, "left arm", true);
+  }
+  if(rightEnabled())
+  {
+    zeroHand(right_, "right");
+    zeroTracker(rightArm_, "right arm", true);
+  }
   left_.previousTargetValid = false;
   right_.previousTargetValid = false;
   leftArm_.previousTargetValid = false;
@@ -2284,8 +2315,8 @@ void ViveHandBridge::updateGrippers(mc_control::fsm::Controller & ctl)
     const double opening = hand.gripperClosed ? closedValue_ : openValue_;
     gripper.setTargetOpening(opening);
   };
-  update(left_, leftGripper_);
-  update(right_, rightGripper_);
+  if(leftEnabled()) { update(left_, leftGripper_); }
+  if(rightEnabled()) { update(right_, rightGripper_); }
 }
 
 void ViveHandBridge::publishAdhesionCommand()
@@ -2335,6 +2366,16 @@ bool ViveHandBridge::gripperPressed(HandState & hand) const
   }
   // 当前实验固定使用 grip 切换夹具；trigger 专用于“已抓住”通知。
   return hand.latest.grip_button;
+}
+
+bool ViveHandBridge::leftEnabled() const
+{
+  return activeSide_ != "right";
+}
+
+bool ViveHandBridge::rightEnabled() const
+{
+  return activeSide_ != "left";
 }
 
 EXPORT_SINGLE_STATE("ViveHandBridge", ViveHandBridge)
