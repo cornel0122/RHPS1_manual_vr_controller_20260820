@@ -220,6 +220,7 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
   // 共享自主通过这个只读状态判断 Vive 是否已经完成双手确认并开始控制。
   ctl.datastore().make_call(name() + "::tracking_started", [this]() -> bool { return trackingStarted_; });
   ctl.datastore().make_call("ANA::Vive::tracking_started", [this]() -> bool { return trackingStarted_; });
+  ctl.datastore().make_call("ANA::Vive::control_mode", [this]() -> std::string { return activeSide_; });
 
   if(experimentConditionEnabled_)
   {
@@ -759,6 +760,10 @@ void ViveHandBridge::teardown(mc_control::fsm::Controller & ctl)
   if(ctl.datastore().has("ANA::Vive::tracking_started"))
   {
     ctl.datastore().remove("ANA::Vive::tracking_started");
+  }
+  if(ctl.datastore().has("ANA::Vive::control_mode"))
+  {
+    ctl.datastore().remove("ANA::Vive::control_mode");
   }
   if(experimentConditionEnabled_)
   {

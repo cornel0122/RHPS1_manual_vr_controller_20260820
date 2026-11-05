@@ -53,6 +53,7 @@ cd ~/luyisi/rhps1_cornel_vive_controller/operator_pc
 - 右手 `menu` 长按 1.5 秒：暂停并保持当前目标；
 - 右手 `grip`：切换右侧夹具开合；
 - 左侧输入、左侧 arm task 更新和左侧夹具命令均被忽略。
+- HMD 头部控制被冻结；头部 task 保持当前目标且目标速度归零。
 
 左侧测试完全对称。`both` 模式保持原有双手 menu 逻辑。
 
@@ -62,6 +63,7 @@ cd ~/luyisi/rhps1_cornel_vive_controller/operator_pc
 - 在 `READY` 或 `PAUSED` 状态收到新模式后，controller 冻结目标、清除旧输入，并重新等待所需设备
   的新数据及 menu 确认。
 - controller 每次启动默认是 `both`；没有收到有效条件时不会自行进入单侧模式。
+- 只有 `both` 模式允许 `ViveHeadBridge` 使用 HMD 控制头部；`left/right` 均不要求佩戴 HMD。
 - Control PC 的 `MainRobot` 仍须与现场 RobotModule、IOB 和实际夹具类型一致。
 
 ## GUI 检查

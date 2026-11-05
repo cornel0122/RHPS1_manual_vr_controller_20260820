@@ -83,7 +83,11 @@ bool ViveHeadBridge::run(mc_control::fsm::Controller & ctl)
   const std::string trackingKey = "ANA::Vive::tracking_started";
   const bool trackingGateAvailable = ctl.datastore().has(trackingKey);
   const bool trackingActive = !trackingGateAvailable || ctl.datastore().call<bool>(trackingKey);
-  if(!trackingActive)
+  const std::string controlModeKey = "ANA::Vive::control_mode";
+  const std::string controlMode =
+      ctl.datastore().has(controlModeKey) ? ctl.datastore().call<std::string>(controlModeKey) : "both";
+  const bool headControlAllowed = controlMode == "both";
+  if(!trackingActive || !headControlAllowed)
   {
     if(task_)
     {
