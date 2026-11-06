@@ -38,6 +38,16 @@ MC Control 运行中切换四种条件，不需要重启机器人。Vive 操作�
 整手开合程度，`grip` 发送“已经抓住物体”的通知。部署和首次测试见
 `docs/Cornel_RHPS1双LEAP手部署_20261028.md`。
 
+不启动 mc_rtc 或实体机器人也可以预览上述模拟输入到 LEAP Hand 的映射：
+
+```bash
+cd ~/luyisi/rhps1_cornel_vive_controller/operator_pc
+./run_leap_trigger_mujoco_preview --side right
+```
+
+窗口中按 `0`、`5`、`1` 分别查看 trigger 0%、50%、100%；也可在 Vive talker
+运行时添加 `--topic /controller_1`，由真实手柄连续驱动预览。
+
 本目录用于把 RHPS1 的 Vive 手动遥操作控制器从 Operator PC 搬运到实验室 Control PC，
 并提供一套不必重新编译即可切换四种实验条件的真机实验 controller。
 

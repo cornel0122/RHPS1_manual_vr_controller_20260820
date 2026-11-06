@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -eo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$ROOT_DIR/rhps1_ros_env.sh"
+
+VIVE_ROS_SETUP="${VIVE_ROS_SETUP:-$HOME/luyisi/ViveSimpleInterface-main/ros/install/setup.bash}"
+if [[ -f "$VIVE_ROS_SETUP" ]]; then
+  source "$VIVE_ROS_SETUP"
+fi
+
+exec python3 "$ROOT_DIR/leap_trigger_mujoco_preview.py" "$@"
