@@ -165,6 +165,20 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
   experimentResetDuration_ = std::max(1.0, experimentResetDuration_);
   config("adhesion_topic", adhesionTopic_);
   config("grasp_event_topic", graspEventTopic_);
+  config("gripper_control_mode", gripperControlMode_);
+  config("grasp_notification_input", graspNotificationInput_);
+  if(gripperControlMode_ != "toggle_grip" && gripperControlMode_ != "analog_trigger")
+  {
+    mc_rtc::log::error_and_throw<std::runtime_error>(
+        "[{}] Invalid gripper_control_mode '{}'; expected toggle_grip or analog_trigger",
+        name(), gripperControlMode_);
+  }
+  if(graspNotificationInput_ != "trigger" && graspNotificationInput_ != "grip")
+  {
+    mc_rtc::log::error_and_throw<std::runtime_error>(
+        "[{}] Invalid grasp_notification_input '{}'; expected trigger or grip",
+        name(), graspNotificationInput_);
+  }
   if(config.has("grasp_notification_trigger_threshold"))
   {
     config("grasp_notification_trigger_threshold", graspNotificationTriggerThreshold_);
@@ -174,6 +188,10 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
     // 兼容旧配置名，但该阈值现在只用于 trigger 通知，不再控制夹具。
     config("gripper_trigger_threshold", graspNotificationTriggerThreshold_);
   }
+  config("analog_trigger_deadzone", analogTriggerDeadzone_);
+  config("analog_trigger_filter_alpha", analogTriggerFilterAlpha_);
+  analogTriggerDeadzone_ = std::clamp(analogTriggerDeadzone_, 0.0, 0.49);
+  analogTriggerFilterAlpha_ = std::clamp(analogTriggerFilterAlpha_, 0.0, 1.0);
   config("use_velocity_feedforward", useVelocityFeedforward_);
   config("velocity_feedforward_gain", velocityFeedforwardGain_);
   useLinearVelocityFeedforward_ = useVelocityFeedforward_;
@@ -302,8 +320,9 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
         }
         hand.gripperReady = true;
         mc_rtc::log::success(
-            "[{}] {} gripper '{}' ready: profile={}, active_joints={}, Vive grip toggles open/close",
-            name(), side, gripperName, gripperProfile_, gripper.activeJoints().size());
+            "[{}] {} gripper '{}' ready: profile={}, active_joints={}, control_mode={}, notification_input={}",
+            name(), side, gripperName, gripperProfile_, gripper.activeJoints().size(), gripperControlMode_,
+            graspNotificationInput_);
       }
     };
     if(leftEnabled()) { prepareGripper(left_, leftGripper_, leftGripperJoint_, "left"); }
@@ -544,6 +563,9 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
       mc_rtc::gui::Label("Waist tracker", [this]() { return waist_.hasData; }),
       mc_rtc::gui::Label("Left gripper closed", [this]() { return left_.gripperClosed; }),
       mc_rtc::gui::Label("Right gripper closed", [this]() { return right_.gripperClosed; }),
+      mc_rtc::gui::Label("Gripper control mode", [this]() -> const std::string & { return gripperControlMode_; }),
+      mc_rtc::gui::Label("Left gripper opening target", [this]() { return left_.analogOpening; }),
+      mc_rtc::gui::Label("Right gripper opening target", [this]() { return right_.analogOpening; }),
       mc_rtc::gui::Label("MuJoCo adhesion", [this]() { return controlMujocoAdhesion_; }),
       mc_rtc::gui::Label("Waist reference", [this]() { return useWaistReference_ && waist_.hasData; }),
       mc_rtc::gui::Label("Direct waist control", [this]() { return directWaistControl_; }),
@@ -704,14 +726,16 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
 
   const bool leftGripper = gripperPressed(left_);
   const bool rightGripper = gripperPressed(right_);
-  if(leftEnabled() && !leftReset && leftGripper && !left_.previousGripperButton)
+  if(gripperControlMode_ == "toggle_grip" && leftEnabled() && !leftReset && leftGripper
+     && !left_.previousGripperButton)
   {
     left_.gripperCommandActive = true;
     left_.gripperClosed = !left_.gripperClosed;
     mc_rtc::log::info("[{}] Left gripper {}", name(), left_.gripperClosed ? "closed" : "open");
     publishGraspEvent("left", left_.gripperClosed ? "gripper_closed" : "gripper_opened", left_.latest.trigger);
   }
-  if(rightEnabled() && !rightReset && rightGripper && !right_.previousGripperButton)
+  if(gripperControlMode_ == "toggle_grip" && rightEnabled() && !rightReset && rightGripper
+     && !right_.previousGripperButton)
   {
     right_.gripperCommandActive = true;
     right_.gripperClosed = !right_.gripperClosed;
@@ -722,15 +746,13 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
   left_.previousGripperButton = leftReset ? true : leftGripper;
   right_.previousGripperButton = rightReset ? true : rightGripper;
 
-  const bool leftGraspNotification =
-      left_.hasData && left_.latest.trigger >= graspNotificationTriggerThreshold_;
-  const bool rightGraspNotification =
-      right_.hasData && right_.latest.trigger >= graspNotificationTriggerThreshold_;
-  if(leftGraspNotification && !left_.previousGraspNotificationButton)
+  const bool leftGraspNotification = graspNotificationPressed(left_);
+  const bool rightGraspNotification = graspNotificationPressed(right_);
+  if(leftEnabled() && leftGraspNotification && !left_.previousGraspNotificationButton)
   {
     publishGraspEvent("left", "grasp_notify", left_.latest.trigger);
   }
-  if(rightGraspNotification && !right_.previousGraspNotificationButton)
+  if(rightEnabled() && rightGraspNotification && !right_.previousGraspNotificationButton)
   {
     publishGraspEvent("right", "grasp_notify", right_.latest.trigger);
   }
@@ -1101,10 +1123,13 @@ bool ViveHandBridge::startOrResumeTracking(mc_control::fsm::Controller & ctl)
   rightArm_.heldTargetVelocity = sva::MotionVecd::Zero();
   left_.previousGripperButton = true;
   right_.previousGripperButton = true;
-  left_.previousGraspNotificationButton =
-      left_.hasData && left_.latest.trigger >= graspNotificationTriggerThreshold_;
-  right_.previousGraspNotificationButton =
-      right_.hasData && right_.latest.trigger >= graspNotificationTriggerThreshold_;
+  left_.previousGraspNotificationButton = graspNotificationPressed(left_);
+  right_.previousGraspNotificationButton = graspNotificationPressed(right_);
+  if(gripperControlMode_ == "analog_trigger")
+  {
+    if(leftEnabled() && left_.gripperReady) { left_.gripperCommandActive = true; }
+    if(rightEnabled() && right_.gripperReady) { right_.gripperCommandActive = true; }
+  }
   mc_rtc::log::success("[{}] Vive control {}", name(), firstStart ? "started" : "resumed");
   return true;
 }
@@ -2355,15 +2380,16 @@ void ViveHandBridge::updateGrippers(mc_control::fsm::Controller & ctl)
   {
     return;
   }
-  // 第一次 grip 上升沿之前不发送任何夹具目标，避免 controller 启动时夹具自行张开。
-  // 使用整夹具 opening 接口，让 RobotModule 决定所有主动/从动关节的正确联动。
-  auto update = [&](const HandState & hand, const std::string & gripperName) {
+  // toggle_grip 在第一次 grip 上升沿之前不发送目标；analog_trigger 仅在 tracking
+  // 已启动时激活。整夹具 opening 由 RobotModule 映射到 Sake2 或 LEAP 的所有主动关节。
+  auto update = [&](HandState & hand, const std::string & gripperName) {
     if(!hand.hasData || !hand.gripperReady || !hand.gripperCommandActive || !ctl.robot().hasGripper(gripperName))
     {
       return;
     }
     auto & gripper = ctl.robot().gripper(gripperName);
-    const double opening = hand.gripperClosed ? closedValue_ : openValue_;
+    const double opening = gripperControlMode_ == "analog_trigger" ? analogGripperOpening(hand)
+                                                                    : (hand.gripperClosed ? closedValue_ : openValue_);
     gripper.setTargetOpening(opening);
   };
   if(leftEnabled()) { update(left_, leftGripper_); }
@@ -2415,8 +2441,47 @@ bool ViveHandBridge::gripperPressed(HandState & hand) const
   {
     return false;
   }
-  // 当前实验固定使用 grip 切换夹具；trigger 专用于“已抓住”通知。
+  // Sake2 配置用 grip 切换夹具；LEAP 配置保留该输入用于抓取通知。
   return hand.latest.grip_button;
+}
+
+bool ViveHandBridge::graspNotificationPressed(const HandState & hand) const
+{
+  if(!hand.hasData)
+  {
+    return false;
+  }
+  if(graspNotificationInput_ == "grip")
+  {
+    return hand.latest.grip_button;
+  }
+  return hand.latest.trigger >= graspNotificationTriggerThreshold_;
+}
+
+double ViveHandBridge::analogGripperOpening(HandState & hand)
+{
+  const double raw = std::clamp(static_cast<double>(hand.latest.trigger), 0.0, 1.0);
+  double normalized = 0.0;
+  if(raw >= 1.0 - analogTriggerDeadzone_)
+  {
+    normalized = 1.0;
+  }
+  else if(raw > analogTriggerDeadzone_)
+  {
+    normalized = (raw - analogTriggerDeadzone_) / (1.0 - 2.0 * analogTriggerDeadzone_);
+  }
+  const double requestedOpening = openValue_ + normalized * (closedValue_ - openValue_);
+  if(!hand.analogOpeningInitialized)
+  {
+    hand.analogOpening = requestedOpening;
+    hand.analogOpeningInitialized = true;
+  }
+  else
+  {
+    hand.analogOpening += analogTriggerFilterAlpha_ * (requestedOpening - hand.analogOpening);
+  }
+  hand.gripperClosed = normalized >= 0.5;
+  return hand.analogOpening;
 }
 
 bool ViveHandBridge::leftEnabled() const

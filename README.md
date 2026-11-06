@@ -34,8 +34,8 @@ MC Control 运行中切换四种条件，不需要重启机器人。Vive 操作�
 
 双 LEAP Hands 实体版本使用 `MainRobot: RHPS1_leap_leap`，并选择名称带
 `_leap_manual` 或 `_leap_experiment` 的 controller。它保留相同的 VIVE
-手臂控制、暂停/继续、实验条件与组间复位功能；`grip` 通过
-`LEAPHandPlugin` 控制整手开合。部署和首次测试见
+手臂控制、暂停/继续、实验条件与组间复位功能；后部模拟 `trigger` 连续控制
+整手开合程度，`grip` 发送“已经抓住物体”的通知。部署和首次测试见
 `docs/Cornel_RHPS1双LEAP手部署_20261028.md`。
 
 本目录用于把 RHPS1 的 Vive 手动遥操作控制器从 Operator PC 搬运到实验室 Control PC，

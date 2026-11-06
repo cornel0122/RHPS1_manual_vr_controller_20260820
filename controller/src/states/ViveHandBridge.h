@@ -77,6 +77,8 @@ private:
     bool gripperReady = false;
     bool gripperClosed = false;
     bool gripperCommandActive = false;
+    bool analogOpeningInitialized = false;
+    double analogOpening = 0.0;
     Eigen::Vector3d zeroVive = Eigen::Vector3d::Zero();
     Eigen::Matrix3d zeroRotation = Eigen::Matrix3d::Identity();
     sva::PTransformd zeroRobot = sva::PTransformd::Identity();
@@ -181,6 +183,8 @@ private:
   void publishGraspEvent(const std::string & hand, const std::string & event, double triggerValue);
   bool resetPressed(HandState & hand) const;
   bool gripperPressed(HandState & hand) const;
+  bool graspNotificationPressed(const HandState & hand) const;
+  double analogGripperOpening(HandState & hand);
   bool leftEnabled() const;
   bool rightEnabled() const;
 
@@ -309,7 +313,11 @@ private:
   double gripperSafetyVmaxPercent_ = 0.05;
   double adhesionOpenValue_ = 0.0;
   double adhesionClosedValue_ = 0.01;
+  std::string gripperControlMode_ = "toggle_grip";
+  std::string graspNotificationInput_ = "trigger";
   double graspNotificationTriggerThreshold_ = 0.9;
+  double analogTriggerDeadzone_ = 0.05;
+  double analogTriggerFilterAlpha_ = 0.2;
   double velocityFeedforwardGain_ = 1.0;
   double linearVelocityGain_ = 1.0;
   double angularVelocityGain_ = 1.0;

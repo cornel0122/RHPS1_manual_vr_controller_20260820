@@ -54,6 +54,8 @@ endif()
 # below require all 16 active joints before any Vive grip command is accepted.
 set(AVATAR_GRIPPER_PROFILE "sake2")
 set(AVATAR_GRIPPER_EXPECTED_ACTIVE_JOINTS 1)
+set(AVATAR_GRIPPER_CONTROL_MODE "toggle_grip")
+set(AVATAR_GRASP_NOTIFICATION_INPUT "trigger")
 
 set(AVATAR_INITIAL_STATE "LIPMWalking::Initial")
 set(AVATAR_INITIAL_STATE_OUTPUT "Standing")
@@ -130,10 +132,13 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_none.yaml"
 
 # Physical RHPS1 with two LEAP Hands. Arm/head retargeting, experiment delay,
 # shared autonomy, pause/resume and between-trial reset remain unchanged.
-# LEAPHandPlugin only transports mc_rtc gripper commands to the hardware;
-# finger open/close commands still come from the Vive grip buttons.
+# LEAPHandPlugin only transports mc_rtc gripper commands to the hardware.
+# The rear analog trigger controls continuous whole-hand opening; grip sends the
+# operator grasp-confirmation event without changing the hand target.
 set(AVATAR_GRIPPER_PROFILE "leap")
 set(AVATAR_GRIPPER_EXPECTED_ACTIVE_JOINTS 16)
+set(AVATAR_GRIPPER_CONTROL_MODE "analog_trigger")
+set(AVATAR_GRASP_NOTIFICATION_INPUT "grip")
 set(AVATAR_INITIAL_STATE "ANA::ManualInitial")
 set(AVATAR_INITIAL_STATE_OUTPUT "Standing")
 set(AVATAR_DEMO_WALK_FSM_STATE "- ANA::WalkFSM")
