@@ -51,7 +51,7 @@ cd ~/luyisi/rhps1_cornel_vive_controller/operator_pc
 
 - 右手 `menu` 短按：开始或继续控制；
 - 右手 `menu` 长按 1.5 秒：暂停并保持当前目标；
-- Sake2 controller：右手 `grip` 切换右侧夹具开合，`trigger` 发送抓取通知；
+- Sake2 controller：右手模拟 `trigger` 连续控制夹具开合，`grip` 发送抓取通知；
 - LEAP controller：右手模拟 `trigger` 连续控制整手开合，`grip` 发送抓取通知；
 - 左侧输入、左侧 arm task 更新和左侧夹具命令均被忽略。
 - HMD 头部控制被冻结；头部 task 保持当前目标且目标速度归零。

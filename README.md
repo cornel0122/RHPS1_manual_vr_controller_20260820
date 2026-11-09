@@ -32,6 +32,10 @@ MC Control 运行中切换四种条件，不需要重启机器人。Vive 操作�
 
 详细流程见 `docs/Cornel_Vive暂停与组间复位_20261028.md`。
 
+Sake2 与 LEAP 实体版本现在使用相同的手部输入：后部模拟 `trigger` 连续控制
+夹具/整手开合程度，`grip` 只发送“已经抓住物体”的通知。两种硬件仍使用各自的
+RobotModule、IOB 和 controller 变体。
+
 双 LEAP Hands 实体版本使用 `MainRobot: RHPS1_leap_leap`，并选择名称带
 `_leap_manual` 或 `_leap_experiment` 的 controller。它保留相同的 VIVE
 手臂控制、暂停/继续、实验条件与组间复位功能；后部模拟 `trigger` 连续控制

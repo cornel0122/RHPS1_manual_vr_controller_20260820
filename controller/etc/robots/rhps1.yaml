@@ -345,7 +345,7 @@ states:
     # 发布夹具闭合状态；MuJoCo 端仍由 ANA_RHPS1_MAGNET 开关决定是否施加磁吸力。
     control_mujoco_adhesion: true
     control_hand_orientation: true
-    # trigger 超过该阈值时只发送一次“操作者确认已抓住”事件，不再控制夹具。
+    # 仅当 grasp_notification_input=trigger 时使用；超过该阈值后发送一次抓取确认事件。
     grasp_notification_trigger_threshold: 0.9
     grasp_event_topic: /rtgr/operator/grasp_events
     left_gripper: "l_gripper"

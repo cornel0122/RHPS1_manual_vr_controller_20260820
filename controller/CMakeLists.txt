@@ -50,12 +50,13 @@ else()
   set(SIM_CONF "false")
 endif()
 
-# Sake2 variants use one active joint per gripper. Dedicated LEAP variants
-# below require all 16 active joints before any Vive grip command is accepted.
+# Sake2 variants use one active joint per gripper. They share the same operator
+# mapping as LEAP: rear analog trigger controls opening and grip sends the
+# grasp-confirmation event. Dedicated LEAP variants below require 16 joints.
 set(AVATAR_GRIPPER_PROFILE "sake2")
 set(AVATAR_GRIPPER_EXPECTED_ACTIVE_JOINTS 1)
-set(AVATAR_GRIPPER_CONTROL_MODE "toggle_grip")
-set(AVATAR_GRASP_NOTIFICATION_INPUT "trigger")
+set(AVATAR_GRIPPER_CONTROL_MODE "analog_trigger")
+set(AVATAR_GRASP_NOTIFICATION_INPUT "grip")
 
 set(AVATAR_INITIAL_STATE "LIPMWalking::Initial")
 set(AVATAR_INITIAL_STATE_OUTPUT "Standing")

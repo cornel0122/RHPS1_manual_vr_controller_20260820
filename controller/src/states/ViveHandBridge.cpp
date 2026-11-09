@@ -2441,7 +2441,7 @@ bool ViveHandBridge::gripperPressed(HandState & hand) const
   {
     return false;
   }
-  // Sake2 配置用 grip 切换夹具；LEAP 配置保留该输入用于抓取通知。
+  // grip 的用途由配置决定：旧 toggle 模式切换夹具，当前实体配置用于抓取通知。
   return hand.latest.grip_button;
 }
 
