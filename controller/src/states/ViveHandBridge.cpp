@@ -340,6 +340,18 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
     if(rightEnabled()) { prepareGripper(right_, rightGripper_, rightGripperJoint_, "right"); }
   }
 
+  // The RViz-only hardware check is deliberately limited to the physical LEAP
+  // manual controller. It bypasses Vive tracking, but still goes through the
+  // mc_rtc gripper and LEAPHandPlugin safety/transport path.
+  hardwareTestAvailable_ = controlGrippers_ && gripperProfile_ == "leap" && !experimentConditionEnabled_;
+  hardwareTestArmed_ = false;
+  hardwareTestCommandActive_ = false;
+  hardwareTestDisarmRequested_ = false;
+  hardwareTestArmRequest_.clear();
+  hardwareTestSide_ = "none";
+  hardwareTestOpening_ = openValue_;
+  hardwareTestStatus_ = hardwareTestAvailable_ ? "DISARMED - select one hand to begin" : "unavailable";
+
   mc_rtc::log::info("[{}] ViveHandBridge loaded: neutral_body_calibration={}, wrist_pivot_compensation={}, "
                     "left_position_horizontal_fix={}, "
                     "left_position_horizontal_mode={}, linear_velocity_ff={}, angular_velocity_ff={}, "
@@ -617,6 +629,69 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
       mc_rtc::gui::Button("CONFIRM LEFT hand grasped", [this]() { guiLeftGraspNotificationRequested_ = true; }),
       mc_rtc::gui::Button("CONFIRM RIGHT hand grasped", [this]() { guiRightGraspNotificationRequested_ = true; }));
 
+  if(hardwareTestAvailable_)
+  {
+    const double sliderMin = std::min(openValue_, closedValue_);
+    const double sliderMax = std::max(openValue_, closedValue_);
+    ctl.gui()->addElement(
+        this, {"Avatar", "LEAP Hand Hardware Test"},
+        mc_rtc::gui::Label("Purpose", []() {
+          return std::string("RViz-only LEAP Hand check; no SteamVR, controller or tracker required");
+        }),
+        mc_rtc::gui::Label("Safety", []() {
+          return std::string("Arms stay fixed. Select exactly one hand. VIVE control automatically disarms this test");
+        }),
+        mc_rtc::gui::Label("Status", [this]() -> const std::string & { return hardwareTestStatus_; }),
+        mc_rtc::gui::Label("Armed", [this]() { return hardwareTestArmed_; }),
+        mc_rtc::gui::Label("Command active", [this]() { return hardwareTestCommandActive_; }),
+        mc_rtc::gui::Label("Selected hand", [this]() -> const std::string & { return hardwareTestSide_; }),
+        mc_rtc::gui::Label("Left gripper ready", [this]() { return left_.gripperReady; }),
+        mc_rtc::gui::Label("Right gripper ready", [this]() { return right_.gripperReady; }),
+        mc_rtc::gui::Label("Configured open value", [this]() { return openValue_; }),
+        mc_rtc::gui::Label("Configured closed value", [this]() { return closedValue_; }),
+        mc_rtc::gui::Label("Selected hand actual joint openings", [this, &ctl]() {
+          if(hardwareTestSide_ == "left" && ctl.robot().hasGripper(leftGripper_))
+          {
+            return ctl.robot().gripper(leftGripper_).curOpening();
+          }
+          if(hardwareTestSide_ == "right" && ctl.robot().hasGripper(rightGripper_))
+          {
+            return ctl.robot().gripper(rightGripper_).curOpening();
+          }
+          return std::vector<double>{};
+        }),
+        mc_rtc::gui::Button("ARM RIGHT HAND TEST", [this]() { hardwareTestArmRequest_ = "right"; }),
+        mc_rtc::gui::Button("ARM LEFT HAND TEST", [this]() { hardwareTestArmRequest_ = "left"; }),
+        mc_rtc::gui::Button("DISARM AND HOLD", [this]() { hardwareTestDisarmRequested_ = true; }),
+        mc_rtc::gui::NumberSlider(
+            "Opening target", [this]() { return hardwareTestOpening_; },
+            [this, sliderMin, sliderMax](double value) {
+              hardwareTestOpening_ = std::clamp(value, sliderMin, sliderMax);
+              hardwareTestCommandActive_ = hardwareTestArmed_;
+              hardwareTestStatus_ = hardwareTestArmed_ ? "commanding selected hand from RViz slider"
+                                                       : "target changed while DISARMED; ARM a hand, then change it again";
+            },
+            sliderMin, sliderMax),
+        mc_rtc::gui::Button("OPEN", [this]() {
+          hardwareTestOpening_ = openValue_;
+          hardwareTestCommandActive_ = hardwareTestArmed_;
+          hardwareTestStatus_ = hardwareTestArmed_ ? "commanding OPEN preset"
+                                                   : "OPEN ignored while DISARMED; ARM a hand first";
+        }),
+        mc_rtc::gui::Button("HALF CLOSE", [this]() {
+          hardwareTestOpening_ = 0.5 * (openValue_ + closedValue_);
+          hardwareTestCommandActive_ = hardwareTestArmed_;
+          hardwareTestStatus_ = hardwareTestArmed_ ? "commanding HALF CLOSE preset"
+                                                   : "HALF CLOSE ignored while DISARMED; ARM a hand first";
+        }),
+        mc_rtc::gui::Button("CLOSE", [this]() {
+          hardwareTestOpening_ = closedValue_;
+          hardwareTestCommandActive_ = hardwareTestArmed_;
+          hardwareTestStatus_ = hardwareTestArmed_ ? "commanding CLOSE preset"
+                                                   : "CLOSE ignored while DISARMED; ARM a hand first";
+        }));
+  }
+
   ctl.gui()->addElement(
       this, {"Avatar", "Experiment Reset"},
       mc_rtc::gui::Label("Vive control state", [this]() { return controlStateName(); }),
@@ -667,6 +742,7 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
 bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
 {
   rclcpp::spin_some(node_);
+  processHardwareTestRequests(ctl);
   const bool guiLeftGraspNotification = guiLeftGraspNotificationRequested_;
   const bool guiRightGraspNotification = guiRightGraspNotificationRequested_;
   guiLeftGraspNotificationRequested_ = false;
@@ -752,6 +828,11 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
   left_.previousResetButton = leftReset;
   right_.previousResetButton = rightReset;
 
+  if(trackingStarted_ && hardwareTestArmed_)
+  {
+    disarmHardwareTest("automatically disarmed because VIVE tracking started");
+  }
+
   if(!trackingStarted_)
   {
     if(guiLeftGraspNotification || guiRightGraspNotification)
@@ -760,6 +841,7 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
       mc_rtc::log::warning("[{}] {}", name(), lastGraspNotificationStatus_);
     }
     holdCurrentTargets();
+    updateHardwareTestGripper(ctl);
     output("OK");
     return true;
   }
@@ -838,6 +920,7 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
 
 void ViveHandBridge::teardown(mc_control::fsm::Controller & ctl)
 {
+  disarmHardwareTest("controller state stopped");
   ctl.datastore().remove(name() + "::tracking_started");
   if(ctl.datastore().has("ANA::Vive::tracking_started"))
   {
@@ -2432,6 +2515,117 @@ void ViveHandBridge::publishLegacyPoseVelocity(
   accel.accel.linear.y = velocity.linear().y();
   accel.accel.linear.z = velocity.linear().z();
   velocityPub->publish(accel);
+}
+
+void ViveHandBridge::processHardwareTestRequests(mc_control::fsm::Controller & ctl)
+{
+  if(hardwareTestDisarmRequested_)
+  {
+    hardwareTestDisarmRequested_ = false;
+    hardwareTestArmRequest_.clear();
+    disarmHardwareTest("DISARMED - holding the last commanded opening");
+    return;
+  }
+
+  if(hardwareTestArmRequest_.empty())
+  {
+    return;
+  }
+
+  const std::string requestedSide = hardwareTestArmRequest_;
+  hardwareTestArmRequest_.clear();
+  if(!hardwareTestAvailable_)
+  {
+    hardwareTestStatus_ = "ARM rejected: hardware test is unavailable for this controller";
+    mc_rtc::log::warning("[{}] {}", name(), hardwareTestStatus_);
+    return;
+  }
+  if(trackingStarted_)
+  {
+    hardwareTestStatus_ = "ARM rejected: pause VIVE tracking first";
+    mc_rtc::log::warning("[{}] {}", name(), hardwareTestStatus_);
+    return;
+  }
+
+  HandState * hand = nullptr;
+  std::string gripperName;
+  if(requestedSide == "left")
+  {
+    hand = &left_;
+    gripperName = leftGripper_;
+  }
+  else if(requestedSide == "right")
+  {
+    hand = &right_;
+    gripperName = rightGripper_;
+  }
+  else
+  {
+    hardwareTestStatus_ = "ARM rejected: invalid hand selection";
+    mc_rtc::log::error("[{}] {}", name(), hardwareTestStatus_);
+    return;
+  }
+
+  if(!hand->gripperReady || !ctl.robot().hasGripper(gripperName))
+  {
+    hardwareTestStatus_ = "ARM rejected: " + requestedSide + " gripper is not ready";
+    mc_rtc::log::error("[{}] {}", name(), hardwareTestStatus_);
+    return;
+  }
+
+  const double sliderMin = std::min(openValue_, closedValue_);
+  const double sliderMax = std::max(openValue_, closedValue_);
+  const auto currentOpenings = ctl.robot().gripper(gripperName).curOpening();
+  double currentOpeningMean = openValue_;
+  if(!currentOpenings.empty())
+  {
+    currentOpeningMean = 0.0;
+    for(const double opening : currentOpenings)
+    {
+      currentOpeningMean += opening;
+    }
+    currentOpeningMean /= static_cast<double>(currentOpenings.size());
+  }
+  hardwareTestOpening_ = std::clamp(currentOpeningMean, sliderMin, sliderMax);
+  hardwareTestSide_ = requestedSide;
+  hardwareTestArmed_ = true;
+  hardwareTestCommandActive_ = false;
+  hardwareTestStatus_ = "ARMED " + requestedSide + "; no motion until slider or a preset button is used";
+  mc_rtc::log::warning("[{}] RViz-only LEAP hardware test armed without commanding motion: hand={}, mean opening={:.3f}",
+                       name(), requestedSide, hardwareTestOpening_);
+}
+
+void ViveHandBridge::updateHardwareTestGripper(mc_control::fsm::Controller & ctl)
+{
+  if(!hardwareTestAvailable_ || !hardwareTestArmed_ || !hardwareTestCommandActive_ || trackingStarted_)
+  {
+    return;
+  }
+
+  HandState * hand = hardwareTestSide_ == "left" ? &left_ : (hardwareTestSide_ == "right" ? &right_ : nullptr);
+  const std::string & gripperName = hardwareTestSide_ == "left" ? leftGripper_ : rightGripper_;
+  if(!hand || !hand->gripperReady || !ctl.robot().hasGripper(gripperName))
+  {
+    disarmHardwareTest("automatically disarmed because the selected gripper is no longer ready");
+    return;
+  }
+
+  const double sliderMin = std::min(openValue_, closedValue_);
+  const double sliderMax = std::max(openValue_, closedValue_);
+  hardwareTestOpening_ = std::clamp(hardwareTestOpening_, sliderMin, sliderMax);
+  ctl.robot().gripper(gripperName).setTargetOpening(hardwareTestOpening_);
+}
+
+void ViveHandBridge::disarmHardwareTest(const std::string & reason)
+{
+  if(hardwareTestArmed_)
+  {
+    mc_rtc::log::warning("[{}] RViz-only LEAP hardware test disarmed: {}", name(), reason);
+  }
+  hardwareTestArmed_ = false;
+  hardwareTestCommandActive_ = false;
+  hardwareTestSide_ = "none";
+  hardwareTestStatus_ = reason;
 }
 
 void ViveHandBridge::updateGrippers(mc_control::fsm::Controller & ctl)

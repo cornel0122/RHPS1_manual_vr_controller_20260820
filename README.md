@@ -48,6 +48,15 @@ RViz 的 `Avatar / Vive / Grasp confirmation` 中提供左右手研究者备用�
 整手开合程度，`grip` 发送“已经抓住物体”的通知。部署和首次测试见
 `docs/Cornel_RHPS1双LEAP手部署_20261028.md`。
 
+仅检查实体 LEAP Hand 时不需要启动 SteamVR、Vive talker 或穿戴 tracker。运行
+`ANAAvatarControllerRHPS1CornelVive_leap_manual` 后，在 RViz 的
+`Avatar / LEAP Hand Hardware Test` 页面选择 `ARM RIGHT HAND TEST` 或
+`ARM LEFT HAND TEST`，再使用 opening 滑块或 `OPEN`、`HALF CLOSE`、`CLOSE`
+预设按钮。测试模式默认未解锁、每次只控制一只手，并从该手的当前开度接管；
+点击 `ARM` 本身不会发送运动命令，必须随后主动调整滑块或选择预设。
+`DISARM AND HOLD` 会保持最后目标。VIVE tracking 一旦开始，硬件测试会自动解除，
+避免两个输入源同时写夹具目标。该入口只控制 LEAP Hand，不移动机器人手臂。
+
 不启动 mc_rtc 或实体机器人也可以预览上述模拟输入到 LEAP Hand 的映射：
 
 ```bash

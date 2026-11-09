@@ -179,6 +179,9 @@ private:
                                  const rclcpp::Publisher<geometry_msgs::msg::AccelStamped>::SharedPtr & velocityPub,
                                  const sva::PTransformd & target,
                                  const sva::MotionVecd & velocity);
+  void processHardwareTestRequests(mc_control::fsm::Controller & ctl);
+  void updateHardwareTestGripper(mc_control::fsm::Controller & ctl);
+  void disarmHardwareTest(const std::string & reason);
   void updateGrippers(mc_control::fsm::Controller & ctl);
   void publishAdhesionCommand();
   void publishGraspEvent(const std::string & hand, const std::string & event, double triggerValue);
@@ -366,5 +369,13 @@ private:
   uint64_t leftGraspNotificationCount_ = 0;
   uint64_t rightGraspNotificationCount_ = 0;
   std::string lastGraspNotificationStatus_ = "none";
+  bool hardwareTestAvailable_ = false;
+  bool hardwareTestArmed_ = false;
+  bool hardwareTestCommandActive_ = false;
+  bool hardwareTestDisarmRequested_ = false;
+  std::string hardwareTestArmRequest_;
+  std::string hardwareTestSide_ = "none";
+  double hardwareTestOpening_ = 0.7;
+  std::string hardwareTestStatus_ = "unavailable";
   std::vector<std::string> velocityValidationLogEntries_;
 };
