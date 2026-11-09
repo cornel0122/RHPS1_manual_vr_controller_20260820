@@ -53,6 +53,8 @@ cd ~/luyisi/rhps1_cornel_vive_controller/operator_pc
 - 右手 `menu` 长按 1.5 秒：暂停并保持当前目标；
 - Sake2 controller：右手模拟 `trigger` 连续控制夹具开合，`grip` 发送抓取通知；
 - LEAP controller：右手模拟 `trigger` 连续控制整手开合，`grip` 发送抓取通知；
+- trigger 进入闭合区时记录该手最近的物体，grip 确认其为 `grasped_object`；
+  trigger 回到打开区时清除该状态；
 - 左侧输入、左侧 arm task 更新和左侧夹具命令均被忽略。
 - HMD 头部控制被冻结；头部 task 保持当前目标且目标速度归零。
 
@@ -73,6 +75,12 @@ cd ~/luyisi/rhps1_cornel_vive_controller/operator_pc
 
 - `Active side` 显示 `left`、`right` 或 `both`；
 - 所选侧手柄、arm tracker 与 `Waist tracker` 为 true；
+
+参与者漏按抓取通知时，研究者可在
+`Avatar / Vive / Grasp confirmation` 点击对应侧的 `CONFIRM ... hand grasped`。
+该后门发送与 Grip 相同的 `grasp_notify`；如闭合事件缺失，会先补发
+`gripper_closed` 以记录当前最近物体。只有 tracking 已运行且该侧已启用时才生效。
+如该轮抓取已经确认，重复点击 RViz 按钮会被抑制。
 - 单侧模式下另一侧为 false 是正常现象；
 - 短按所选侧 menu 后，`Control state` 从 `READY` 变为 `RUNNING`。
 

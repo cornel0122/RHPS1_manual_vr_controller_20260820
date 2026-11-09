@@ -36,6 +36,12 @@ Sake2 与 LEAP 实体版本现在使用相同的手部输入：后部模拟 `tri
 夹具/整手开合程度，`grip` 只发送“已经抓住物体”的通知。两种硬件仍使用各自的
 RobotModule、IOB 和 controller 变体。
 
+连续 trigger 使用滞回产生意图系统所需的夹具事件：进入闭合区时发送
+`gripper_closed` 并记录最近物体，回到打开区时发送 `gripper_opened`
+并清除抓取状态。`grip` 的 `grasp_notify` 正式确认该物体已被抓住。
+RViz 的 `Avatar / Vive / Grasp confirmation` 中提供左右手研究者备用确认按钮。
+已确认时再点同侧 RViz 按钮会被抑制，不会误产生第二次完成请求。
+
 双 LEAP Hands 实体版本使用 `MainRobot: RHPS1_leap_leap`，并选择名称带
 `_leap_manual` 或 `_leap_experiment` 的 controller。它保留相同的 VIVE
 手臂控制、暂停/继续、实验条件与组间复位功能；后部模拟 `trigger` 连续控制

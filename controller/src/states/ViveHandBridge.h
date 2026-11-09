@@ -76,6 +76,7 @@ private:
     bool previousGraspNotificationButton = false;
     bool gripperReady = false;
     bool gripperClosed = false;
+    bool graspConfirmed = false;
     bool gripperCommandActive = false;
     bool analogOpeningInitialized = false;
     double analogOpening = 0.0;
@@ -181,6 +182,11 @@ private:
   void updateGrippers(mc_control::fsm::Controller & ctl);
   void publishAdhesionCommand();
   void publishGraspEvent(const std::string & hand, const std::string & event, double triggerValue);
+  void updateAnalogGraspState(HandState & hand, const std::string & side);
+  bool confirmGrasp(HandState & hand,
+                    const std::string & side,
+                    const std::string & source,
+                    bool trustedOverride);
   bool resetPressed(HandState & hand) const;
   bool gripperPressed(HandState & hand) const;
   bool graspNotificationPressed(const HandState & hand) const;
@@ -318,6 +324,8 @@ private:
   double graspNotificationTriggerThreshold_ = 0.9;
   double analogTriggerDeadzone_ = 0.05;
   double analogTriggerFilterAlpha_ = 0.2;
+  double analogGripperClosedThreshold_ = 0.9;
+  double analogGripperOpenedThreshold_ = 0.1;
   double velocityFeedforwardGain_ = 1.0;
   double linearVelocityGain_ = 1.0;
   double angularVelocityGain_ = 1.0;
@@ -353,5 +361,10 @@ private:
   std::string adhesionTopic_ = "/ana/mujoco/adhesion";
   std::string graspEventTopic_ = "/rtgr/operator/grasp_events";
   uint64_t graspEventSequence_ = 0;
+  bool guiLeftGraspNotificationRequested_ = false;
+  bool guiRightGraspNotificationRequested_ = false;
+  uint64_t leftGraspNotificationCount_ = 0;
+  uint64_t rightGraspNotificationCount_ = 0;
+  std::string lastGraspNotificationStatus_ = "none";
   std::vector<std::string> velocityValidationLogEntries_;
 };

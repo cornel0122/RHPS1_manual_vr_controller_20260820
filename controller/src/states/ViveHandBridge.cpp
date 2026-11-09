@@ -190,8 +190,19 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
   }
   config("analog_trigger_deadzone", analogTriggerDeadzone_);
   config("analog_trigger_filter_alpha", analogTriggerFilterAlpha_);
+  config("analog_gripper_closed_threshold", analogGripperClosedThreshold_);
+  config("analog_gripper_opened_threshold", analogGripperOpenedThreshold_);
   analogTriggerDeadzone_ = std::clamp(analogTriggerDeadzone_, 0.0, 0.49);
   analogTriggerFilterAlpha_ = std::clamp(analogTriggerFilterAlpha_, 0.0, 1.0);
+  analogGripperClosedThreshold_ = std::clamp(analogGripperClosedThreshold_, 0.0, 1.0);
+  analogGripperOpenedThreshold_ = std::clamp(analogGripperOpenedThreshold_, 0.0, 1.0);
+  if(analogGripperOpenedThreshold_ >= analogGripperClosedThreshold_)
+  {
+    mc_rtc::log::error_and_throw<std::runtime_error>(
+        "[{}] analog_gripper_opened_threshold ({:.3f}) must be smaller than "
+        "analog_gripper_closed_threshold ({:.3f})",
+        name(), analogGripperOpenedThreshold_, analogGripperClosedThreshold_);
+  }
   config("use_velocity_feedforward", useVelocityFeedforward_);
   config("velocity_feedforward_gain", velocityFeedforwardGain_);
   useLinearVelocityFeedforward_ = useVelocityFeedforward_;
@@ -592,6 +603,21 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
                                [this](double d) { inputDelay_ = std::max(0.0, d); }));
 
   ctl.gui()->addElement(
+      this, {"Avatar", "Vive", "Grasp confirmation"},
+      mc_rtc::gui::Label("Purpose", []() {
+        return std::string("Researcher fallback; same grasp confirmation as the controller Grip button");
+      }),
+      mc_rtc::gui::Label("Left grasp-event latch", [this]() { return left_.gripperClosed; }),
+      mc_rtc::gui::Label("Right grasp-event latch", [this]() { return right_.gripperClosed; }),
+      mc_rtc::gui::Label("Left grasp confirmed", [this]() { return left_.graspConfirmed; }),
+      mc_rtc::gui::Label("Right grasp confirmed", [this]() { return right_.graspConfirmed; }),
+      mc_rtc::gui::Label("Left confirmation count", [this]() { return std::to_string(leftGraspNotificationCount_); }),
+      mc_rtc::gui::Label("Right confirmation count", [this]() { return std::to_string(rightGraspNotificationCount_); }),
+      mc_rtc::gui::Label("Last result", [this]() -> const std::string & { return lastGraspNotificationStatus_; }),
+      mc_rtc::gui::Button("CONFIRM LEFT hand grasped", [this]() { guiLeftGraspNotificationRequested_ = true; }),
+      mc_rtc::gui::Button("CONFIRM RIGHT hand grasped", [this]() { guiRightGraspNotificationRequested_ = true; }));
+
+  ctl.gui()->addElement(
       this, {"Avatar", "Experiment Reset"},
       mc_rtc::gui::Label("Vive control state", [this]() { return controlStateName(); }),
       mc_rtc::gui::Label("Reset target", []() { return std::string("controller start pose"); }),
@@ -641,6 +667,10 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
 bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
 {
   rclcpp::spin_some(node_);
+  const bool guiLeftGraspNotification = guiLeftGraspNotificationRequested_;
+  const bool guiRightGraspNotification = guiRightGraspNotificationRequested_;
+  guiLeftGraspNotificationRequested_ = false;
+  guiRightGraspNotificationRequested_ = false;
   applyPendingControlModeCommand();
   applyPendingExperimentCommand(ctl);
   updateDelayedInputs();
@@ -664,6 +694,11 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
   processExperimentReset(ctl);
   if(experimentResetActive_)
   {
+    if(guiLeftGraspNotification || guiRightGraspNotification)
+    {
+      lastGraspNotificationStatus_ = "RViz confirmation ignored during experiment reset";
+      mc_rtc::log::warning("[{}] {}", name(), lastGraspNotificationStatus_);
+    }
     left_.previousResetButton = leftReset;
     right_.previousResetButton = rightReset;
     output("OK");
@@ -719,6 +754,11 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
 
   if(!trackingStarted_)
   {
+    if(guiLeftGraspNotification || guiRightGraspNotification)
+    {
+      lastGraspNotificationStatus_ = "RViz confirmation ignored: Vive tracking is not running";
+      mc_rtc::log::warning("[{}] {}", name(), lastGraspNotificationStatus_);
+    }
     holdCurrentTargets();
     output("OK");
     return true;
@@ -731,6 +771,7 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
   {
     left_.gripperCommandActive = true;
     left_.gripperClosed = !left_.gripperClosed;
+    if(!left_.gripperClosed) { left_.graspConfirmed = false; }
     mc_rtc::log::info("[{}] Left gripper {}", name(), left_.gripperClosed ? "closed" : "open");
     publishGraspEvent("left", left_.gripperClosed ? "gripper_closed" : "gripper_opened", left_.latest.trigger);
   }
@@ -739,6 +780,7 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
   {
     right_.gripperCommandActive = true;
     right_.gripperClosed = !right_.gripperClosed;
+    if(!right_.gripperClosed) { right_.graspConfirmed = false; }
     mc_rtc::log::info("[{}] Right gripper {}", name(), right_.gripperClosed ? "closed" : "open");
     publishGraspEvent("right", right_.gripperClosed ? "gripper_closed" : "gripper_opened", right_.latest.trigger);
   }
@@ -746,15 +788,33 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
   left_.previousGripperButton = leftReset ? true : leftGripper;
   right_.previousGripperButton = rightReset ? true : rightGripper;
 
+  if(gripperControlMode_ == "analog_trigger")
+  {
+    if(leftEnabled()) { updateAnalogGraspState(left_, "left"); }
+    if(rightEnabled()) { updateAnalogGraspState(right_, "right"); }
+  }
+
   const bool leftGraspNotification = graspNotificationPressed(left_);
   const bool rightGraspNotification = graspNotificationPressed(right_);
-  if(leftEnabled() && leftGraspNotification && !left_.previousGraspNotificationButton)
+  const bool leftControllerNotification = leftGraspNotification && !left_.previousGraspNotificationButton;
+  const bool rightControllerNotification = rightGraspNotification && !right_.previousGraspNotificationButton;
+  if(leftEnabled() && (leftControllerNotification || guiLeftGraspNotification))
   {
-    publishGraspEvent("left", "grasp_notify", left_.latest.trigger);
+    confirmGrasp(left_, "left", guiLeftGraspNotification ? "RViz" : "Grip", guiLeftGraspNotification);
   }
-  if(rightEnabled() && rightGraspNotification && !right_.previousGraspNotificationButton)
+  else if(guiLeftGraspNotification)
   {
-    publishGraspEvent("right", "grasp_notify", right_.latest.trigger);
+    lastGraspNotificationStatus_ = "RViz LEFT confirmation ignored: left side is disabled";
+    mc_rtc::log::warning("[{}] {}", name(), lastGraspNotificationStatus_);
+  }
+  if(rightEnabled() && (rightControllerNotification || guiRightGraspNotification))
+  {
+    confirmGrasp(right_, "right", guiRightGraspNotification ? "RViz" : "Grip", guiRightGraspNotification);
+  }
+  else if(guiRightGraspNotification)
+  {
+    lastGraspNotificationStatus_ = "RViz RIGHT confirmation ignored: right side is disabled";
+    mc_rtc::log::warning("[{}] {}", name(), lastGraspNotificationStatus_);
   }
   left_.previousGraspNotificationButton = leftGraspNotification;
   right_.previousGraspNotificationButton = rightGraspNotification;
@@ -2423,6 +2483,74 @@ void ViveHandBridge::publishGraspEvent(const std::string & hand,
   graspEventPub_->publish(msg);
   mc_rtc::log::info("[{}] 抓取事件: hand={}, event={}, trigger={:.3f}, sequence={}", name(), hand, event,
                     triggerValue, graspEventSequence_);
+}
+
+void ViveHandBridge::updateAnalogGraspState(HandState & hand, const std::string & side)
+{
+  if(!hand.hasData)
+  {
+    return;
+  }
+  const double trigger = std::clamp(static_cast<double>(hand.latest.trigger), 0.0, 1.0);
+  if(!hand.gripperClosed && trigger >= analogGripperClosedThreshold_)
+  {
+    hand.gripperClosed = true;
+    hand.graspConfirmed = false;
+    publishGraspEvent(side, "gripper_closed", trigger);
+    mc_rtc::log::info("[{}] {} analog gripper entered closed region at trigger={:.3f}", name(), side, trigger);
+  }
+  else if(hand.gripperClosed && trigger <= analogGripperOpenedThreshold_)
+  {
+    hand.gripperClosed = false;
+    hand.graspConfirmed = false;
+    publishGraspEvent(side, "gripper_opened", trigger);
+    mc_rtc::log::info("[{}] {} analog gripper entered open region at trigger={:.3f}", name(), side, trigger);
+  }
+}
+
+bool ViveHandBridge::confirmGrasp(HandState & hand,
+                                  const std::string & side,
+                                  const std::string & source,
+                                  bool trustedOverride)
+{
+  const double trigger = hand.hasData ? std::clamp(static_cast<double>(hand.latest.trigger), 0.0, 1.0) : 0.0;
+  if(trustedOverride && hand.graspConfirmed)
+  {
+    lastGraspNotificationStatus_ = side + " grasp was already confirmed; RViz duplicate suppressed";
+    mc_rtc::log::warning("[{}] {}", name(), lastGraspNotificationStatus_);
+    return true;
+  }
+  if(!hand.gripperClosed)
+  {
+    const bool partiallyClosed =
+        gripperControlMode_ == "analog_trigger" && hand.hasData && trigger > analogGripperOpenedThreshold_;
+    if(!trustedOverride && !partiallyClosed)
+    {
+      lastGraspNotificationStatus_ =
+          side + " Grip confirmation ignored: gripper is in the open region";
+      mc_rtc::log::warning("[{}] {}", name(), lastGraspNotificationStatus_);
+      return false;
+    }
+
+    // A trusted RViz correction, or a Grip confirmation during partial analog closure,
+    // first creates the same candidate snapshot that the old discrete close event did.
+    hand.gripperClosed = true;
+    publishGraspEvent(side, "gripper_closed", trigger);
+  }
+
+  publishGraspEvent(side, "grasp_notify", trigger);
+  hand.graspConfirmed = true;
+  if(side == "left")
+  {
+    ++leftGraspNotificationCount_;
+  }
+  else
+  {
+    ++rightGraspNotificationCount_;
+  }
+  lastGraspNotificationStatus_ = side + " grasp confirmed via " + source;
+  mc_rtc::log::success("[{}] {}", name(), lastGraspNotificationStatus_);
+  return true;
 }
 
 bool ViveHandBridge::resetPressed(HandState & hand) const

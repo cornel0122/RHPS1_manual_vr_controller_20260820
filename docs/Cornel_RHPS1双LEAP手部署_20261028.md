@@ -25,6 +25,9 @@ Timestep: 0.005
 - VIVE `menu`、双手长按暂停、继续和实验组间复位与 Sake 版本相同；
 - 后部模拟 `trigger` 连续控制整手开合程度：松开为张开，完全扣下为闭合；
 - VIVE `grip` 的上升沿只向意图系统发送“已经抓住物体”的通知，不改变手指目标；
+- `trigger >= 0.90` 发送 `gripper_closed` 并记录最近物体，`trigger <= 0.10`
+  发送 `gripper_opened` 并清除抓取状态；
+- RViz `Avatar / Vive / Grasp confirmation` 有左右手备用确认按钮；
 - 手指命令只在 VIVE tracking 开始后启用；暂停时保持最后的整手目标，继续后按当前
   `trigger` 位置继续控制，不重新建立零点；
 - 模拟输入带 5% 死区和低通滤波，实体夹具仍受 controller 中的低速与安全参数限制；
@@ -63,8 +66,10 @@ LEAPHandPlugin:
 5. 启动 VIVE talker，只验证手臂 menu 开始、暂停和继续，暂不扣动 `trigger`。
 6. 将实体手移到无物体、无碰撞位置，先在单侧缓慢扣动并松开 `trigger`，确认整手
    开合方向及比例正确。
-7. 按一次 `grip`，只确认日志/意图系统收到 `grasp_notify`，实体手不应因此改变目标。
-8. 确认低速安全保护正确后，再测试另一侧；手动版本通过后才切换到 `_leap_experiment`。
+7. 将 trigger 拉入闭合区并按一次 `grip`，确认日志/意图系统依次收到
+   `gripper_closed` 和 `grasp_notify`，实体手不应因 `grip` 改变目标。
+8. 松开 trigger，确认收到 `gripper_opened`。再测试 RViz 对应侧备用确认按钮。
+9. 确认低速安全保护正确后，再测试另一侧；手动版本通过后才切换到 `_leap_experiment`。
 
 若日志显示 `expects 16 active joint(s)`，controller 会禁止对应侧的 VIVE 手指
 命令；此时应修复 `RHPS1_leap_leap` RobotModule/IOB 配置，不应绕过检查。

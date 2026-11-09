@@ -347,6 +347,9 @@ states:
     control_hand_orientation: true
     # 仅当 grasp_notification_input=trigger 时使用；超过该阈值后发送一次抓取确认事件。
     grasp_notification_trigger_threshold: 0.9
+    # 模拟 trigger 连续控制时，使用滞回阈值发送夹具闭合/打开事件。
+    analog_gripper_closed_threshold: 0.90
+    analog_gripper_opened_threshold: 0.10
     grasp_event_topic: /rtgr/operator/grasp_events
     left_gripper: "l_gripper"
     right_gripper: "r_gripper"
