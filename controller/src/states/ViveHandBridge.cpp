@@ -9,6 +9,9 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <iomanip>
+#include <numeric>
+#include <sstream>
 #include <stdexcept>
 
 void ViveHandBridge::configure(const mc_rtc::Configuration & config)
@@ -649,16 +652,28 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
         mc_rtc::gui::Label("Right gripper ready", [this]() { return right_.gripperReady; }),
         mc_rtc::gui::Label("Configured open value", [this]() { return openValue_; }),
         mc_rtc::gui::Label("Configured closed value", [this]() { return closedValue_; }),
-        mc_rtc::gui::Label("Selected hand actual joint openings", [this, &ctl]() {
+        mc_rtc::gui::Label("Actual opening", [this, &ctl]() {
+          std::vector<double> openings;
           if(hardwareTestSide_ == "left" && ctl.robot().hasGripper(leftGripper_))
           {
-            return ctl.robot().gripper(leftGripper_).curOpening();
+            openings = ctl.robot().gripper(leftGripper_).curOpening();
           }
-          if(hardwareTestSide_ == "right" && ctl.robot().hasGripper(rightGripper_))
+          else if(hardwareTestSide_ == "right" && ctl.robot().hasGripper(rightGripper_))
           {
-            return ctl.robot().gripper(rightGripper_).curOpening();
+            openings = ctl.robot().gripper(rightGripper_).curOpening();
           }
-          return std::vector<double>{};
+          if(openings.empty())
+          {
+            return std::string("n/a");
+          }
+
+          const auto range = std::minmax_element(openings.begin(), openings.end());
+          const double mean = std::accumulate(openings.begin(), openings.end(), 0.0)
+                              / static_cast<double>(openings.size());
+          std::ostringstream summary;
+          summary << std::fixed << std::setprecision(3) << "mean " << mean << " | range " << *range.first << ".."
+                  << *range.second;
+          return summary.str();
         }),
         mc_rtc::gui::Button("ARM RIGHT HAND TEST", [this]() { hardwareTestArmRequest_ = "right"; }),
         mc_rtc::gui::Button("ARM LEFT HAND TEST", [this]() { hardwareTestArmRequest_ = "left"; }),
