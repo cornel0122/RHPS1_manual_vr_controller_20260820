@@ -50,12 +50,20 @@ RViz 的 `Avatar / Vive / Grasp confirmation` 中提供左右手研究者备用�
 
 仅检查实体 LEAP Hand 时不需要启动 SteamVR、Vive talker 或穿戴 tracker。运行
 `ANAAvatarControllerRHPS1CornelVive_leap_manual` 后，在 RViz 的
-`Avatar / LEAP Hand Hardware Test` 页面选择 `ARM RIGHT HAND TEST` 或
-`ARM LEFT HAND TEST`，再使用 opening 滑块或 `OPEN`、`HALF CLOSE`、`CLOSE`
-预设按钮。测试模式默认未解锁、每次只控制一只手，并从该手的当前开度接管；
-点击 `ARM` 本身不会发送运动命令，必须随后主动调整滑块或选择预设。
-`DISARM AND HOLD` 会保持最后目标。VIVE tracking 一旦开始，硬件测试会自动解除，
-避免两个输入源同时写夹具目标。该入口只控制 LEAP Hand，不移动机器人手臂。
+`Avatar / LEAP Grasp Tuning` 页面分别调试右臂和右侧 LEAP Hand：
+
+- `Right Arm` 提供 7 个 RHPS1 右臂关节条，并可把一个可配置的身体前方测试姿态载入编辑器；
+- `Right Hand` 按 Finger 1/2/3/Thumb 分组提供 16 个关节条；每组另有一个快速条，
+  其 0% 和 100% 四关节端点由操作者从当前编辑姿态分别记录，不预设统一弯曲方向；
+- 候选 A/B/C 保存本次 MC Control 会话中的编辑手型，载入候选本身不会运动；
+- 所有滑块都只修改 editor target。`ARM` 只从实测姿态建立安全保持，必须再按
+  `APPLY EDITOR SLOWLY` 才会按平滑轨迹驱动真机；`HOLD NOW` 立即以实测姿态为目标，
+  `DISARM AND HOLD` 退出调试；
+- VIVE tracking 一旦开始，右手与右臂调试都会自动解除，避免两个输入源争用目标。
+
+默认 mc_rtc 日志记录右臂与 16 个手关节的实际值、编辑值和命令值，以及快速条、
+候选来源、执行进度和事件序号。A/B/C 当前是会话内槽位；需要跨重启复用时，应从日志
+确认姿态后再写入受版本管理的配置，避免把未经真机验证的手型自动恢复到硬件。
 
 不启动 mc_rtc 或实体机器人也可以预览上述模拟输入到 LEAP Hand 的映射：
 

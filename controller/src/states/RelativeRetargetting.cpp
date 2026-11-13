@@ -265,6 +265,9 @@ void RelativeRetargetting::start(mc_control::fsm::Controller & ctl)
       ctl.solver().addTask(posture_override_);
       mc_rtc::log::warning("[{}] RHPS1 shoulder posture override enabled", name());
     }
+    // Expose the existing shoulder branch task so the RViz right-arm tuning
+    // tool can temporarily remove its weight instead of fighting it.
+    ctl.datastore().make<mc_tasks::PostureTaskPtr>(name() + "PostureOverrideTask", posture_override_);
   }
 
   createGUI(ctl);
@@ -517,6 +520,7 @@ void RelativeRetargetting::teardown(mc_control::fsm::Controller & ctl)
     ctl.solver().removeTask(posture_override_);
     posture_override_active_ = false;
   }
+  if(ctl.datastore().has(name() + "PostureOverrideTask")) { ctl.datastore().remove(name() + "PostureOverrideTask"); }
   ctl.gui()->removeElements(this);
   ctl.logger().removeLogEntries(this);
   thread_on = false;

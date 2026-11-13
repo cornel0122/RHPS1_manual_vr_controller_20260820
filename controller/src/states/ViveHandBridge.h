@@ -6,12 +6,13 @@
 #include <mc_tasks/TransformTask.h>
 #include <geometry_msgs/msg/accel_stamped.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
-#include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/float64_multi_array.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <vr_interface_msgs/msg/controller.hpp>
 #include <vr_interface_msgs/msg/tracker.hpp>
+#include <rclcpp/rclcpp.hpp>
 
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -171,9 +172,7 @@ private:
                                  const sva::MotionVecd & worldVelocity,
                                  const sva::MotionVecd & commandWorldVelocity);
   void setupVelocityValidation(mc_control::fsm::Controller & ctl);
-  void addVelocityValidationLogs(mc_control::fsm::Controller & ctl,
-                                 HandState & hand,
-                                 const std::string & side);
+  void addVelocityValidationLogs(mc_control::fsm::Controller & ctl, HandState & hand, const std::string & side);
   sva::MotionVecd feedforwardVelocity(const sva::MotionVecd & velocity) const;
   void publishLegacyPoseVelocity(const rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr & posePub,
                                  const rclcpp::Publisher<geometry_msgs::msg::AccelStamped>::SharedPtr & velocityPub,
@@ -182,14 +181,24 @@ private:
   void processHardwareTestRequests(mc_control::fsm::Controller & ctl);
   void updateHardwareTestGripper(mc_control::fsm::Controller & ctl);
   void disarmHardwareTest(const std::string & reason);
+  bool initializeLeapHandTuning(mc_control::fsm::Controller & ctl);
+  void addLeapHandTuningGui(mc_control::fsm::Controller & ctl);
+  void addLeapHandTuningLogs(mc_control::fsm::Controller & ctl);
+  void setLeapQuickEndpoint(size_t group, bool high);
+  void applyLeapQuickInterpolation(size_t group, double percent);
+  std::string leapGroupPoseSummary(size_t group, bool high) const;
+  void recordHardwareTestEvent(const std::string & event);
+  void processRightArmTestRequests(mc_control::fsm::Controller & ctl);
+  void updateRightArmTest(mc_control::fsm::Controller & ctl);
+  void disarmRightArmTest(mc_control::fsm::Controller & ctl, const std::string & reason);
+  bool initializeRightArmTuning(mc_control::fsm::Controller & ctl);
+  void addRightArmTuningGui(mc_control::fsm::Controller & ctl);
+  void addRightArmTuningLogs(mc_control::fsm::Controller & ctl);
   void updateGrippers(mc_control::fsm::Controller & ctl);
   void publishAdhesionCommand();
   void publishGraspEvent(const std::string & hand, const std::string & event, double triggerValue);
   void updateAnalogGraspState(HandState & hand, const std::string & side);
-  bool confirmGrasp(HandState & hand,
-                    const std::string & side,
-                    const std::string & source,
-                    bool trustedOverride);
+  bool confirmGrasp(HandState & hand, const std::string & side, const std::string & source, bool trustedOverride);
   bool resetPressed(HandState & hand) const;
   bool gripperPressed(HandState & hand) const;
   bool graspNotificationPressed(const HandState & hand) const;
@@ -271,6 +280,7 @@ private:
   std::string rightRobotHandFrame_ = "RightHand";
   mc_rtc::Configuration config_;
   std::shared_ptr<mc_tasks::TransformTask> headTask_;
+  std::shared_ptr<mc_tasks::PostureTask> rightShoulderOverrideTask_;
 
   double scale_ = 1.0;
   Eigen::Vector3d axisScale_ = Eigen::Vector3d::Ones();
@@ -373,9 +383,64 @@ private:
   bool hardwareTestArmed_ = false;
   bool hardwareTestCommandActive_ = false;
   bool hardwareTestDisarmRequested_ = false;
+  bool hardwareTestApplyRequested_ = false;
+  bool hardwareTestHoldRequested_ = false;
+  bool hardwareTestCaptureRequested_ = false;
+  bool hardwareTestRestoreRequested_ = false;
+  bool hardwareTestApplying_ = false;
   std::string hardwareTestArmRequest_;
   std::string hardwareTestSide_ = "none";
-  double hardwareTestOpening_ = 0.7;
   std::string hardwareTestStatus_ = "unavailable";
+  std::string hardwareTestLastEvent_ = "none";
+  uint64_t hardwareTestEventSequence_ = 0;
+  double hardwareTestApplyDuration_ = 5.0;
+  double hardwareTestApplyStartTime_ = -1.0;
+  double hardwareTestApplyProgress_ = 0.0;
+  std::vector<std::string> leapJointNames_;
+  std::vector<double> leapJointMinimum_;
+  std::vector<double> leapJointMaximum_;
+  std::vector<double> leapActualQ_;
+  std::vector<double> leapEditorQ_;
+  std::vector<double> leapCapturedQ_;
+  std::vector<double> leapCommandQ_;
+  std::vector<double> leapApplyFromQ_;
+  std::vector<double> leapApplyToQ_;
+  std::array<std::vector<double>, 4> leapQuickLowQ_;
+  std::array<std::vector<double>, 4> leapQuickHighQ_;
+  std::array<double, 4> leapQuickPercent_ = {0.0, 0.0, 0.0, 0.0};
+  std::array<std::vector<double>, 3> leapCandidateQ_;
+  std::array<bool, 3> leapCandidateValid_ = {false, false, false};
+  int leapCandidateSaveRequest_ = -1;
+  int leapCandidateLoadRequest_ = -1;
+  std::string leapActiveCandidate_ = "none";
+
+  bool rightArmTestAvailable_ = false;
+  bool rightArmTestArmed_ = false;
+  bool rightArmTestCommandActive_ = false;
+  bool rightArmTestArmRequested_ = false;
+  bool rightArmTestDisarmRequested_ = false;
+  bool rightArmTestApplyRequested_ = false;
+  bool rightArmTestHoldRequested_ = false;
+  bool rightArmTestCaptureRequested_ = false;
+  bool rightArmTestRestoreRequested_ = false;
+  bool rightArmTestLoadDefaultRequested_ = false;
+  bool rightArmTestApplying_ = false;
+  std::string rightArmTestStatus_ = "unavailable";
+  double rightArmTestApplyDuration_ = 8.0;
+  double rightArmTestApplyStartTime_ = -1.0;
+  double rightArmTestApplyProgress_ = 0.0;
+  double rightHandTaskWeightBeforeTest_ = 0.0;
+  double rightArmTaskWeightBeforeTest_ = 0.0;
+  double rightShoulderOverrideWeightBeforeTest_ = 0.0;
+  std::vector<std::string> rightArmJointNames_;
+  std::vector<double> rightArmJointMinimum_;
+  std::vector<double> rightArmJointMaximum_;
+  std::vector<double> rightArmActualQ_;
+  std::vector<double> rightArmEditorQ_;
+  std::vector<double> rightArmCapturedQ_;
+  std::vector<double> rightArmCommandQ_;
+  std::vector<double> rightArmApplyFromQ_;
+  std::vector<double> rightArmApplyToQ_;
+  std::vector<double> rightArmDefaultPose_;
   std::vector<std::string> velocityValidationLogEntries_;
 };

@@ -1155,6 +1155,13 @@ states:
       iter: 8
       release: 0
       vmaxPercent: 0.05
+    # RViz-only LEAP grasp editor. Sliders never command hardware directly;
+    # APPLY SLOWLY interpolates from the measured pose over these durations.
+    leap_tuning_apply_duration: 5.0
+    right_arm_tuning_apply_duration: 8.0
+    # Seven RHPS1 right-arm joints, in the order documented by the RViz panel.
+    # Loading this pose only changes the editor; a separate APPLY is required.
+    right_arm_tuning_pose_deg: [-30, -20, 5, -120, -20, 0, 20]
     robot:
       rhps1:
         control_mujoco_adhesion: false

@@ -10,6 +10,7 @@
 #include <cctype>
 #include <cmath>
 #include <iomanip>
+#include <map>
 #include <numeric>
 #include <sstream>
 #include <stdexcept>
@@ -145,10 +146,7 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
   config("control_hand_orientation", controlHandOrientation_);
   config("invert_hand_orientation_delta", invertHandOrientationDelta_);
   config("invert_arm_orientation_delta", invertArmOrientationDelta_);
-  if(config.has("arm_rotation_sign_fix"))
-  {
-    armRotationSignFix_ = config("arm_rotation_sign_fix");
-  }
+  if(config.has("arm_rotation_sign_fix")) { armRotationSignFix_ = config("arm_rotation_sign_fix"); }
   if(config.has("arm_angular_velocity_sign_fix"))
   {
     armAngularVelocitySignFix_ = config("arm_angular_velocity_sign_fix");
@@ -163,9 +161,18 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
   config("two_hand_press_window", twoHandPressWindow_);
   config("two_hand_pause_hold_duration", twoHandPauseHoldDuration_);
   config("experiment_reset_duration", experimentResetDuration_);
+  config("leap_tuning_apply_duration", hardwareTestApplyDuration_);
+  config("right_arm_tuning_apply_duration", rightArmTestApplyDuration_);
+  std::vector<double> rightArmDefaultPoseDeg = {-30.0, -20.0, 5.0, -120.0, -20.0, 0.0, 20.0};
+  config("right_arm_tuning_pose_deg", rightArmDefaultPoseDeg);
+  rightArmDefaultPose_.clear();
+  rightArmDefaultPose_.reserve(rightArmDefaultPoseDeg.size());
+  for(const double value : rightArmDefaultPoseDeg) { rightArmDefaultPose_.push_back(mc_rtc::constants::toRad(value)); }
   twoHandPressWindow_ = std::max(0.05, twoHandPressWindow_);
   twoHandPauseHoldDuration_ = std::max(0.5, twoHandPauseHoldDuration_);
   experimentResetDuration_ = std::max(1.0, experimentResetDuration_);
+  hardwareTestApplyDuration_ = std::max(1.0, hardwareTestApplyDuration_);
+  rightArmTestApplyDuration_ = std::max(1.0, rightArmTestApplyDuration_);
   config("adhesion_topic", adhesionTopic_);
   config("grasp_event_topic", graspEventTopic_);
   config("gripper_control_mode", gripperControlMode_);
@@ -173,14 +180,12 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
   if(gripperControlMode_ != "toggle_grip" && gripperControlMode_ != "analog_trigger")
   {
     mc_rtc::log::error_and_throw<std::runtime_error>(
-        "[{}] Invalid gripper_control_mode '{}'; expected toggle_grip or analog_trigger",
-        name(), gripperControlMode_);
+        "[{}] Invalid gripper_control_mode '{}'; expected toggle_grip or analog_trigger", name(), gripperControlMode_);
   }
   if(graspNotificationInput_ != "trigger" && graspNotificationInput_ != "grip")
   {
     mc_rtc::log::error_and_throw<std::runtime_error>(
-        "[{}] Invalid grasp_notification_input '{}'; expected trigger or grip",
-        name(), graspNotificationInput_);
+        "[{}] Invalid grasp_notification_input '{}'; expected trigger or grip", name(), graspNotificationInput_);
   }
   if(config.has("grasp_notification_trigger_threshold"))
   {
@@ -285,10 +290,9 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
 
   if(controlGrippers_)
   {
-    auto prepareGripper = [&](HandState & hand,
-                              const std::string & gripperName,
-                              const std::string & configuredJoint,
-                              const std::string & side) {
+    auto prepareGripper = [&](HandState & hand, const std::string & gripperName, const std::string & configuredJoint,
+                              const std::string & side)
+    {
       hand.gripperReady = false;
       if(!ctl.robot().hasGripper(gripperName))
       {
@@ -327,15 +331,14 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
           gripper.overCommandLimitIterN(static_cast<unsigned int>(gripperSafetyIterations_));
           gripper.releaseSafetyOffset(mc_rtc::constants::toRad(gripperSafetyReleaseDeg_));
           gripper.percentVMAX(gripperSafetyVmaxPercent_);
-          mc_rtc::log::info(
-              "[{}] {} gripper safety: threshold={:.1f}deg, iter={}, release={:.1f}deg, vmax={:.1f}%",
-              name(), side, gripperSafetyThresholdDeg_, gripperSafetyIterations_, gripperSafetyReleaseDeg_,
-              100.0 * gripperSafetyVmaxPercent_);
+          mc_rtc::log::info("[{}] {} gripper safety: threshold={:.1f}deg, iter={}, release={:.1f}deg, vmax={:.1f}%",
+                            name(), side, gripperSafetyThresholdDeg_, gripperSafetyIterations_,
+                            gripperSafetyReleaseDeg_, 100.0 * gripperSafetyVmaxPercent_);
         }
         hand.gripperReady = true;
         mc_rtc::log::success(
-            "[{}] {} gripper '{}' ready: profile={}, active_joints={}, control_mode={}, notification_input={}",
-            name(), side, gripperName, gripperProfile_, gripper.activeJoints().size(), gripperControlMode_,
+            "[{}] {} gripper '{}' ready: profile={}, active_joints={}, control_mode={}, notification_input={}", name(),
+            side, gripperName, gripperProfile_, gripper.activeJoints().size(), gripperControlMode_,
             graspNotificationInput_);
       }
     };
@@ -343,38 +346,49 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
     if(rightEnabled()) { prepareGripper(right_, rightGripper_, rightGripperJoint_, "right"); }
   }
 
-  // The RViz-only hardware check is deliberately limited to the physical LEAP
-  // manual controller. It bypasses Vive tracking, but still goes through the
-  // mc_rtc gripper and LEAPHandPlugin safety/transport path.
+  // The RViz-only tuning tools are deliberately limited to the physical LEAP
+  // manual controller. They bypass Vive tracking, but still go through the
+  // mc_rtc gripper, posture task and LEAPHandPlugin safety/transport path.
   hardwareTestAvailable_ = controlGrippers_ && gripperProfile_ == "leap" && !experimentConditionEnabled_;
   hardwareTestArmed_ = false;
   hardwareTestCommandActive_ = false;
   hardwareTestDisarmRequested_ = false;
+  hardwareTestApplyRequested_ = false;
+  hardwareTestHoldRequested_ = false;
+  hardwareTestCaptureRequested_ = false;
+  hardwareTestRestoreRequested_ = false;
+  hardwareTestApplying_ = false;
   hardwareTestArmRequest_.clear();
   hardwareTestSide_ = "none";
-  hardwareTestOpening_ = openValue_;
-  hardwareTestStatus_ = hardwareTestAvailable_ ? "DISARMED - select one hand to begin" : "unavailable";
+  hardwareTestApplyProgress_ = 0.0;
+  hardwareTestStatus_ = hardwareTestAvailable_ ? "DISARMED - arm the right hand editor to begin" : "unavailable";
+  hardwareTestLastEvent_ = "controller state started";
+  hardwareTestEventSequence_ = 0;
+
+  rightArmTestAvailable_ = hardwareTestAvailable_;
+  rightArmTestArmed_ = false;
+  rightArmTestCommandActive_ = false;
+  rightArmTestArmRequested_ = false;
+  rightArmTestDisarmRequested_ = false;
+  rightArmTestApplyRequested_ = false;
+  rightArmTestHoldRequested_ = false;
+  rightArmTestCaptureRequested_ = false;
+  rightArmTestRestoreRequested_ = false;
+  rightArmTestLoadDefaultRequested_ = false;
+  rightArmTestApplying_ = false;
+  rightArmTestApplyProgress_ = 0.0;
+  rightArmTestStatus_ = rightArmTestAvailable_ ? "DISARMED - arm the right arm editor to begin" : "unavailable";
 
   mc_rtc::log::info("[{}] ViveHandBridge loaded: neutral_body_calibration={}, wrist_pivot_compensation={}, "
                     "left_position_horizontal_fix={}, "
                     "left_position_horizontal_mode={}, linear_velocity_ff={}, angular_velocity_ff={}, "
                     "debug_hand_mapping={}, waist_offset_body=[{:.3f}, {:.3f}, {:.3f}], "
                     "hand_offset_body=[{:.3f}, {:.3f}, {:.3f}], handover={:.1f}s",
-                    name(),
-                    neutralBodyCalibration_,
-                    wristPivotCompensation_,
-                    leftPositionHorizontalFix_,
-                    leftPositionHorizontalMode_,
-                    useLinearVelocityFeedforward_,
-                    useAngularVelocityFeedforward_,
-                    debugHandMapping_,
-                    waistReferenceOffsetBody_.x(),
-                    waistReferenceOffsetBody_.y(),
-                    waistReferenceOffsetBody_.z(),
-                    handPositionOffsetBody_.x(),
-                    handPositionOffsetBody_.y(),
-                    handPositionOffsetBody_.z(),
-                    trackingHandoverDuration_);
+                    name(), neutralBodyCalibration_, wristPivotCompensation_, leftPositionHorizontalFix_,
+                    leftPositionHorizontalMode_, useLinearVelocityFeedforward_, useAngularVelocityFeedforward_,
+                    debugHandMapping_, waistReferenceOffsetBody_.x(), waistReferenceOffsetBody_.y(),
+                    waistReferenceOffsetBody_.z(), handPositionOffsetBody_.x(), handPositionOffsetBody_.y(),
+                    handPositionOffsetBody_.z(), trackingHandoverDuration_);
 
   if(!rclcpp::ok())
   {
@@ -387,15 +401,14 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
   node_ = std::make_shared<rclcpp::Node>("ana_vive_hand_bridge");
   graspEventPub_ = node_->create_publisher<std_msgs::msg::String>(graspEventTopic_, 10);
   auto controlModeQos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
-  controlModeSub_ = node_->create_subscription<std_msgs::msg::String>(
-      controlModeTopic_, controlModeQos,
-      [this](const std_msgs::msg::String::SharedPtr msg) { onControlModeCommand(msg); });
+  controlModeSub_ = node_->create_subscription<std_msgs::msg::String>(controlModeTopic_, controlModeQos,
+                                                                      [this](const std_msgs::msg::String::SharedPtr msg)
+                                                                      { onControlModeCommand(msg); });
   if(experimentConditionEnabled_)
   {
     auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
     experimentCommandSub_ = node_->create_subscription<std_msgs::msg::String>(
-        experimentCommandTopic_, qos,
-        [this](const std_msgs::msg::String::SharedPtr msg) { onExperimentCommand(msg); });
+        experimentCommandTopic_, qos, [this](const std_msgs::msg::String::SharedPtr msg) { onExperimentCommand(msg); });
     mc_rtc::log::info("[{}] Waiting for experiment condition 1-4 on {}", name(), experimentCommandTopic_);
   }
   if(controlMujocoAdhesion_)
@@ -424,18 +437,27 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
   {
     left_.task = ctl.datastore().get<std::shared_ptr<mc_tasks::ForceConstrainedTransformTask>>(leftTaskName_);
   }
-  else if(leftEnabled())
-  {
-    mc_rtc::log::warning("[{}] Missing datastore task {}", name(), leftTaskName_);
-  }
+  else if(leftEnabled()) { mc_rtc::log::warning("[{}] Missing datastore task {}", name(), leftTaskName_); }
 
   if(rightEnabled() && ctl.datastore().has(rightTaskName_))
   {
     right_.task = ctl.datastore().get<std::shared_ptr<mc_tasks::ForceConstrainedTransformTask>>(rightTaskName_);
   }
-  else if(rightEnabled())
+  else if(rightEnabled()) { mc_rtc::log::warning("[{}] Missing datastore task {}", name(), rightTaskName_); }
+
+  std::string rightShoulderOverrideKey = rightTaskName_;
+  const std::string taskSuffix = "Task";
+  if(rightShoulderOverrideKey.size() >= taskSuffix.size()
+     && rightShoulderOverrideKey.compare(rightShoulderOverrideKey.size() - taskSuffix.size(), taskSuffix.size(),
+                                         taskSuffix)
+            == 0)
   {
-    mc_rtc::log::warning("[{}] Missing datastore task {}", name(), rightTaskName_);
+    rightShoulderOverrideKey.erase(rightShoulderOverrideKey.size() - taskSuffix.size());
+  }
+  rightShoulderOverrideKey += "PostureOverrideTask";
+  if(ctl.datastore().has(rightShoulderOverrideKey))
+  {
+    rightShoulderOverrideTask_ = ctl.datastore().get<std::shared_ptr<mc_tasks::PostureTask>>(rightShoulderOverrideKey);
   }
 
   if(ctl.robot().hasFrame(robotWaistFrame_) && ctl.robot().hasFrame(leftRobotHandFrame_)
@@ -448,23 +470,14 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
     const auto X_body_right = ctl.robot().frame(rightRobotHandFrame_).position() * X_0_body.inv();
     mc_rtc::log::info("[{}] {} work anchors relative to {}: left=[{:.6f}, {:.6f}, {:.6f}], "
                       "right=[{:.6f}, {:.6f}, {:.6f}]",
-                      name(),
-                      ctl.robot().name(),
-                      robotWaistFrame_,
-                      X_body_left.translation().x(),
-                      X_body_left.translation().y(),
-                      X_body_left.translation().z(),
-                      X_body_right.translation().x(),
-                      X_body_right.translation().y(),
-                      X_body_right.translation().z());
+                      name(), ctl.robot().name(), robotWaistFrame_, X_body_left.translation().x(),
+                      X_body_left.translation().y(), X_body_left.translation().z(), X_body_right.translation().x(),
+                      X_body_right.translation().y(), X_body_right.translation().z());
   }
   else
   {
-    mc_rtc::log::warning("[{}] Cannot record work anchors: missing frame {}, {} or {}",
-                         name(),
-                         robotWaistFrame_,
-                         leftRobotHandFrame_,
-                         rightRobotHandFrame_);
+    mc_rtc::log::warning("[{}] Cannot record work anchors: missing frame {}, {} or {}", name(), robotWaistFrame_,
+                         leftRobotHandFrame_, rightRobotHandFrame_);
   }
 
   if(leftEnabled() && ctl.datastore().has(leftArmTaskName_))
@@ -524,11 +537,9 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
 
   captureExperimentStartPose(ctl);
 
-  auto addUnique = [](std::vector<std::string> & topics, const std::string & topic) {
-    if(!topic.empty() && std::find(topics.begin(), topics.end(), topic) == topics.end())
-    {
-      topics.push_back(topic);
-    }
+  auto addUnique = [](std::vector<std::string> & topics, const std::string & topic)
+  {
+    if(!topic.empty() && std::find(topics.begin(), topics.end(), topic) == topics.end()) { topics.push_back(topic); }
   };
 
   std::vector<std::string> controllerTopics;
@@ -554,25 +565,23 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
   addUnique(trackerTopics, "/tracker_4");
   for(const auto & topic : trackerTopics)
   {
-    trackerSubs_.push_back(
-        node_->create_subscription<Tracker>(topic, 10, [this, topic](const Tracker::SharedPtr msg) { onAnyTracker(topic, msg); }));
+    trackerSubs_.push_back(node_->create_subscription<Tracker>(
+        topic, 10, [this, topic](const Tracker::SharedPtr msg) { onAnyTracker(topic, msg); }));
   }
 
+  if(hardwareTestAvailable_ && !initializeLeapHandTuning(ctl)) { hardwareTestAvailable_ = false; }
+  if(rightArmTestAvailable_ && !initializeRightArmTuning(ctl)) { rightArmTestAvailable_ = false; }
+
   ctl.gui()->addElement(
-      this, {"Avatar", "Vive"},
-      mc_rtc::gui::Label("Control state", [this]() { return controlStateName(); }),
+      this, {"Avatar", "Vive"}, mc_rtc::gui::Label("Control state", [this]() { return controlStateName(); }),
       mc_rtc::gui::Label("Active side", [this]() -> const std::string & { return activeSide_; }),
       mc_rtc::gui::Label("Tracking started", [this]() { return trackingStarted_; }),
       mc_rtc::gui::Label("Pause menu hold [s]", [this]() { return bothMenuHoldProgress_; }),
       mc_rtc::gui::Label("Start/resume count", [this]() { return std::to_string(startResumeCount_); }),
       mc_rtc::gui::Label("Pause count", [this]() { return std::to_string(pauseCount_); }),
       mc_rtc::gui::Label("Experiment condition received", [this]() { return experimentConditionReceived_; }),
-      mc_rtc::gui::Label("Experiment condition", [this]() -> const std::string & {
-        return experimentConditionName_;
-      }),
-      mc_rtc::gui::Label("Experiment session", [this]() -> const std::string & {
-        return experimentSessionId_;
-      }),
+      mc_rtc::gui::Label("Experiment condition", [this]() -> const std::string & { return experimentConditionName_; }),
+      mc_rtc::gui::Label("Experiment session", [this]() -> const std::string & { return experimentSessionId_; }),
       mc_rtc::gui::Label("Experiment assistance enabled", [this]() { return experimentAssistanceEnabled_; }),
       mc_rtc::gui::Label("Initial left reset", [this]() { return initialLeftResetSeen_; }),
       mc_rtc::gui::Label("Initial right reset", [this]() { return initialRightResetSeen_; }),
@@ -597,31 +606,36 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
       mc_rtc::gui::Label("Direct waist control", [this]() { return directWaistControl_; }),
       mc_rtc::gui::Label("Neutral body calibration", [this]() { return neutralBodyCalibration_; }),
       mc_rtc::gui::Label("Wrist pivot compensation", [this]() { return wristPivotCompensation_; }),
-      mc_rtc::gui::NumberInput("Scale", [this]() { return scale_; }, [this](double s) { scale_ = s; }),
-      mc_rtc::gui::NumberInput("Forward scale", [this]() { return axisScale_.x(); },
-                               [this](double s) { axisScale_.x() = s; }),
-      mc_rtc::gui::NumberInput("Lateral scale", [this]() { return axisScale_.y(); },
-                               [this](double s) { axisScale_.y() = s; }),
-      mc_rtc::gui::NumberInput("Vertical scale", [this]() { return axisScale_.z(); },
-                               [this](double s) { axisScale_.z() = s; }),
-      mc_rtc::gui::NumberInput("Waist forward offset [m]", [this]() { return waistReferenceOffsetBody_.x(); },
-                               [this](double offset) { waistReferenceOffsetBody_.x() = offset; }),
-      mc_rtc::gui::NumberInput("Waist lateral offset [m]", [this]() { return waistReferenceOffsetBody_.y(); },
-                               [this](double offset) { waistReferenceOffsetBody_.y() = offset; }),
-      mc_rtc::gui::NumberInput("Waist vertical offset [m]", [this]() { return waistReferenceOffsetBody_.z(); },
-                               [this](double offset) { waistReferenceOffsetBody_.z() = offset; }),
-      mc_rtc::gui::NumberInput("Hand vertical offset [m]", [this]() { return handPositionOffsetBody_.z(); },
-                               [this](double offset) { handPositionOffsetBody_.z() = offset; }),
-      mc_rtc::gui::NumberInput("Max hand step [m]", [this]() { return maxStep_; },
-                               [this](double s) { maxStep_ = std::max(0.05, s); }),
-      mc_rtc::gui::NumberInput("Input delay [s]", [this]() { return inputDelay_; },
-                               [this](double d) { inputDelay_ = std::max(0.0, d); }));
+      mc_rtc::gui::NumberInput(
+          "Scale", [this]() { return scale_; }, [this](double s) { scale_ = s; }),
+      mc_rtc::gui::NumberInput(
+          "Forward scale", [this]() { return axisScale_.x(); }, [this](double s) { axisScale_.x() = s; }),
+      mc_rtc::gui::NumberInput(
+          "Lateral scale", [this]() { return axisScale_.y(); }, [this](double s) { axisScale_.y() = s; }),
+      mc_rtc::gui::NumberInput(
+          "Vertical scale", [this]() { return axisScale_.z(); }, [this](double s) { axisScale_.z() = s; }),
+      mc_rtc::gui::NumberInput(
+          "Waist forward offset [m]", [this]() { return waistReferenceOffsetBody_.x(); },
+          [this](double offset) { waistReferenceOffsetBody_.x() = offset; }),
+      mc_rtc::gui::NumberInput(
+          "Waist lateral offset [m]", [this]() { return waistReferenceOffsetBody_.y(); },
+          [this](double offset) { waistReferenceOffsetBody_.y() = offset; }),
+      mc_rtc::gui::NumberInput(
+          "Waist vertical offset [m]", [this]() { return waistReferenceOffsetBody_.z(); },
+          [this](double offset) { waistReferenceOffsetBody_.z() = offset; }),
+      mc_rtc::gui::NumberInput(
+          "Hand vertical offset [m]", [this]() { return handPositionOffsetBody_.z(); },
+          [this](double offset) { handPositionOffsetBody_.z() = offset; }),
+      mc_rtc::gui::NumberInput(
+          "Max hand step [m]", [this]() { return maxStep_; }, [this](double s) { maxStep_ = std::max(0.05, s); }),
+      mc_rtc::gui::NumberInput(
+          "Input delay [s]", [this]() { return inputDelay_; }, [this](double d) { inputDelay_ = std::max(0.0, d); }));
 
   ctl.gui()->addElement(
       this, {"Avatar", "Vive", "Grasp confirmation"},
-      mc_rtc::gui::Label("Purpose", []() {
-        return std::string("Researcher fallback; same grasp confirmation as the controller Grip button");
-      }),
+      mc_rtc::gui::Label(
+          "Purpose",
+          []() { return std::string("Researcher fallback; same grasp confirmation as the controller Grip button"); }),
       mc_rtc::gui::Label("Left grasp-event latch", [this]() { return left_.gripperClosed; }),
       mc_rtc::gui::Label("Right grasp-event latch", [this]() { return right_.gripperClosed; }),
       mc_rtc::gui::Label("Left grasp confirmed", [this]() { return left_.graspConfirmed; }),
@@ -634,77 +648,13 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
 
   if(hardwareTestAvailable_)
   {
-    const double sliderMin = std::min(openValue_, closedValue_);
-    const double sliderMax = std::max(openValue_, closedValue_);
-    ctl.gui()->addElement(
-        this, {"Avatar", "LEAP Hand Hardware Test"},
-        mc_rtc::gui::Label("Purpose", []() {
-          return std::string("RViz-only LEAP Hand check; no SteamVR, controller or tracker required");
-        }),
-        mc_rtc::gui::Label("Safety", []() {
-          return std::string("Arms stay fixed. Select exactly one hand. VIVE control automatically disarms this test");
-        }),
-        mc_rtc::gui::Label("Status", [this]() -> const std::string & { return hardwareTestStatus_; }),
-        mc_rtc::gui::Label("Armed", [this]() { return hardwareTestArmed_; }),
-        mc_rtc::gui::Label("Command active", [this]() { return hardwareTestCommandActive_; }),
-        mc_rtc::gui::Label("Selected hand", [this]() -> const std::string & { return hardwareTestSide_; }),
-        mc_rtc::gui::Label("Left gripper ready", [this]() { return left_.gripperReady; }),
-        mc_rtc::gui::Label("Right gripper ready", [this]() { return right_.gripperReady; }),
-        mc_rtc::gui::Label("Configured open value", [this]() { return openValue_; }),
-        mc_rtc::gui::Label("Configured closed value", [this]() { return closedValue_; }),
-        mc_rtc::gui::Label("Actual opening", [this, &ctl]() {
-          std::vector<double> openings;
-          if(hardwareTestSide_ == "left" && ctl.robot().hasGripper(leftGripper_))
-          {
-            openings = ctl.robot().gripper(leftGripper_).curOpening();
-          }
-          else if(hardwareTestSide_ == "right" && ctl.robot().hasGripper(rightGripper_))
-          {
-            openings = ctl.robot().gripper(rightGripper_).curOpening();
-          }
-          if(openings.empty())
-          {
-            return std::string("n/a");
-          }
-
-          const auto range = std::minmax_element(openings.begin(), openings.end());
-          const double mean = std::accumulate(openings.begin(), openings.end(), 0.0)
-                              / static_cast<double>(openings.size());
-          std::ostringstream summary;
-          summary << std::fixed << std::setprecision(3) << "mean " << mean << " | range " << *range.first << ".."
-                  << *range.second;
-          return summary.str();
-        }),
-        mc_rtc::gui::Button("ARM RIGHT HAND TEST", [this]() { hardwareTestArmRequest_ = "right"; }),
-        mc_rtc::gui::Button("ARM LEFT HAND TEST", [this]() { hardwareTestArmRequest_ = "left"; }),
-        mc_rtc::gui::Button("DISARM AND HOLD", [this]() { hardwareTestDisarmRequested_ = true; }),
-        mc_rtc::gui::NumberSlider(
-            "Opening target", [this]() { return hardwareTestOpening_; },
-            [this, sliderMin, sliderMax](double value) {
-              hardwareTestOpening_ = std::clamp(value, sliderMin, sliderMax);
-              hardwareTestCommandActive_ = hardwareTestArmed_;
-              hardwareTestStatus_ = hardwareTestArmed_ ? "commanding selected hand from RViz slider"
-                                                       : "target changed while DISARMED; ARM a hand, then change it again";
-            },
-            sliderMin, sliderMax),
-        mc_rtc::gui::Button("OPEN", [this]() {
-          hardwareTestOpening_ = openValue_;
-          hardwareTestCommandActive_ = hardwareTestArmed_;
-          hardwareTestStatus_ = hardwareTestArmed_ ? "commanding OPEN preset"
-                                                   : "OPEN ignored while DISARMED; ARM a hand first";
-        }),
-        mc_rtc::gui::Button("HALF CLOSE", [this]() {
-          hardwareTestOpening_ = 0.5 * (openValue_ + closedValue_);
-          hardwareTestCommandActive_ = hardwareTestArmed_;
-          hardwareTestStatus_ = hardwareTestArmed_ ? "commanding HALF CLOSE preset"
-                                                   : "HALF CLOSE ignored while DISARMED; ARM a hand first";
-        }),
-        mc_rtc::gui::Button("CLOSE", [this]() {
-          hardwareTestOpening_ = closedValue_;
-          hardwareTestCommandActive_ = hardwareTestArmed_;
-          hardwareTestStatus_ = hardwareTestArmed_ ? "commanding CLOSE preset"
-                                                   : "CLOSE ignored while DISARMED; ARM a hand first";
-        }));
+    addLeapHandTuningGui(ctl);
+    addLeapHandTuningLogs(ctl);
+  }
+  if(rightArmTestAvailable_)
+  {
+    addRightArmTuningGui(ctl);
+    addRightArmTuningLogs(ctl);
   }
 
   ctl.gui()->addElement(
@@ -719,32 +669,23 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
 
   // 实验日志记录实际运行参数，便于区分无延迟和有延迟试次。
   const std::string experimentLogPrefix = name() + "_experiment_";
-  ctl.logger().addLogEntry(
-      experimentLogPrefix + "input-delay-s", this, [this]() { return inputDelay_; });
-  ctl.logger().addLogEntry(
-      experimentLogPrefix + "tracking-started", this, [this]() { return trackingStarted_; });
-  ctl.logger().addLogEntry(
-      experimentLogPrefix + "condition-received", this, [this]() { return experimentConditionReceived_; });
-  ctl.logger().addLogEntry(
-      experimentLogPrefix + "condition", this, [this]() { return experimentCondition_; });
-  ctl.logger().addLogEntry(
-      experimentLogPrefix + "condition-name", this, [this]() -> const std::string & {
-        return experimentConditionName_;
-      });
-  ctl.logger().addLogEntry(
-      experimentLogPrefix + "session-id", this, [this]() -> const std::string & {
-        return experimentSessionId_;
-      });
-  ctl.logger().addLogEntry(
-      experimentLogPrefix + "assistance-enabled", this, [this]() { return experimentAssistanceEnabled_; });
-  ctl.logger().addLogEntry(
-      experimentLogPrefix + "linear-velocity-feedforward", this,
-      [this]() { return useLinearVelocityFeedforward_; });
-  ctl.logger().addLogEntry(
-      experimentLogPrefix + "angular-velocity-feedforward", this,
-      [this]() { return useAngularVelocityFeedforward_; });
-  ctl.logger().addLogEntry(
-      experimentLogPrefix + "linear-velocity-gain", this, [this]() { return linearVelocityGain_; });
+  ctl.logger().addLogEntry(experimentLogPrefix + "input-delay-s", this, [this]() { return inputDelay_; });
+  ctl.logger().addLogEntry(experimentLogPrefix + "tracking-started", this, [this]() { return trackingStarted_; });
+  ctl.logger().addLogEntry(experimentLogPrefix + "condition-received", this,
+                           [this]() { return experimentConditionReceived_; });
+  ctl.logger().addLogEntry(experimentLogPrefix + "condition", this, [this]() { return experimentCondition_; });
+  ctl.logger().addLogEntry(experimentLogPrefix + "condition-name", this,
+                           [this]() -> const std::string & { return experimentConditionName_; });
+  ctl.logger().addLogEntry(experimentLogPrefix + "session-id", this,
+                           [this]() -> const std::string & { return experimentSessionId_; });
+  ctl.logger().addLogEntry(experimentLogPrefix + "assistance-enabled", this,
+                           [this]() { return experimentAssistanceEnabled_; });
+  ctl.logger().addLogEntry(experimentLogPrefix + "linear-velocity-feedforward", this,
+                           [this]() { return useLinearVelocityFeedforward_; });
+  ctl.logger().addLogEntry(experimentLogPrefix + "angular-velocity-feedforward", this,
+                           [this]() { return useAngularVelocityFeedforward_; });
+  ctl.logger().addLogEntry(experimentLogPrefix + "linear-velocity-gain", this,
+                           [this]() { return linearVelocityGain_; });
 
   setupVelocityValidation(ctl);
 
@@ -758,6 +699,7 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
 {
   rclcpp::spin_some(node_);
   processHardwareTestRequests(ctl);
+  processRightArmTestRequests(ctl);
   const bool guiLeftGraspNotification = guiLeftGraspNotificationRequested_;
   const bool guiRightGraspNotification = guiRightGraspNotificationRequested_;
   guiLeftGraspNotificationRequested_ = false;
@@ -785,6 +727,8 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
   processExperimentReset(ctl);
   if(experimentResetActive_)
   {
+    if(hardwareTestArmed_) { disarmHardwareTest("automatically disarmed because experiment reset started"); }
+    if(rightArmTestArmed_) { disarmRightArmTest(ctl, "automatically disarmed because experiment reset started"); }
     if(guiLeftGraspNotification || guiRightGraspNotification)
     {
       lastGraspNotificationStatus_ = "RViz confirmation ignored during experiment reset";
@@ -796,24 +740,20 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
     return true;
   }
 
-  const bool simultaneousPress =
-      left_.resetPressTime >= 0.0 && right_.resetPressTime >= 0.0
-      && std::abs(left_.resetPressTime - right_.resetPressTime) <= twoHandPressWindow_;
-  const bool singleSidePress = (leftEnabled() && !rightEnabled() && leftResetRising)
-                               || (rightEnabled() && !leftEnabled() && rightResetRising);
-  const bool startChord = menuActionArmed_ && (activeSide_ == "both" ?
-                                                   (simultaneousPress && (leftResetRising || rightResetRising)) :
-                                                   singleSidePress);
+  const bool simultaneousPress = left_.resetPressTime >= 0.0 && right_.resetPressTime >= 0.0
+                                 && std::abs(left_.resetPressTime - right_.resetPressTime) <= twoHandPressWindow_;
+  const bool singleSidePress =
+      (leftEnabled() && !rightEnabled() && leftResetRising) || (rightEnabled() && !leftEnabled() && rightResetRising);
+  const bool startChord =
+      menuActionArmed_
+      && (activeSide_ == "both" ? (simultaneousPress && (leftResetRising || rightResetRising)) : singleSidePress);
 
   if(trackingStarted_)
   {
     const bool holdChord = activeSide_ == "both" ? (leftReset && rightReset) : (leftReset || rightReset);
     if(menuActionArmed_ && holdChord)
     {
-      if(bothMenuHoldStartTime_ < 0.0)
-      {
-        bothMenuHoldStartTime_ = now();
-      }
+      if(bothMenuHoldStartTime_ < 0.0) { bothMenuHoldStartTime_ = now(); }
       bothMenuHoldProgress_ = std::max(0.0, now() - bothMenuHoldStartTime_);
       if(bothMenuHoldProgress_ >= twoHandPauseHoldDuration_)
       {
@@ -847,6 +787,10 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
   {
     disarmHardwareTest("automatically disarmed because VIVE tracking started");
   }
+  if(trackingStarted_ && rightArmTestArmed_)
+  {
+    disarmRightArmTest(ctl, "automatically disarmed because VIVE tracking started");
+  }
 
   if(!trackingStarted_)
   {
@@ -857,14 +801,14 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
     }
     holdCurrentTargets();
     updateHardwareTestGripper(ctl);
+    updateRightArmTest(ctl);
     output("OK");
     return true;
   }
 
   const bool leftGripper = gripperPressed(left_);
   const bool rightGripper = gripperPressed(right_);
-  if(gripperControlMode_ == "toggle_grip" && leftEnabled() && !leftReset && leftGripper
-     && !left_.previousGripperButton)
+  if(gripperControlMode_ == "toggle_grip" && leftEnabled() && !leftReset && leftGripper && !left_.previousGripperButton)
   {
     left_.gripperCommandActive = true;
     left_.gripperClosed = !left_.gripperClosed;
@@ -936,25 +880,18 @@ bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
 void ViveHandBridge::teardown(mc_control::fsm::Controller & ctl)
 {
   disarmHardwareTest("controller state stopped");
+  disarmRightArmTest(ctl, "controller state stopped");
   ctl.datastore().remove(name() + "::tracking_started");
-  if(ctl.datastore().has("ANA::Vive::tracking_started"))
-  {
-    ctl.datastore().remove("ANA::Vive::tracking_started");
-  }
-  if(ctl.datastore().has("ANA::Vive::control_mode"))
-  {
-    ctl.datastore().remove("ANA::Vive::control_mode");
-  }
+  if(ctl.datastore().has("ANA::Vive::tracking_started")) { ctl.datastore().remove("ANA::Vive::tracking_started"); }
+  if(ctl.datastore().has("ANA::Vive::control_mode")) { ctl.datastore().remove("ANA::Vive::control_mode"); }
   if(experimentConditionEnabled_)
   {
-    const std::vector<std::string> keys = {experimentConditionKey_, experimentConditionNameKey_, experimentSessionKey_,
-                                           experimentAssistanceKey_, experimentDelayKey_, experimentConditionReadyKey_};
+    const std::vector<std::string> keys = {experimentConditionKey_, experimentConditionNameKey_,
+                                           experimentSessionKey_,   experimentAssistanceKey_,
+                                           experimentDelayKey_,     experimentConditionReadyKey_};
     for(const auto & key : keys)
     {
-      if(ctl.datastore().has(key))
-      {
-        ctl.datastore().remove(key);
-      }
+      if(ctl.datastore().has(key)) { ctl.datastore().remove(key); }
     }
   }
   ctl.gui()->removeElements(this);
@@ -2534,124 +2471,797 @@ void ViveHandBridge::publishLegacyPoseVelocity(
 
 void ViveHandBridge::processHardwareTestRequests(mc_control::fsm::Controller & ctl)
 {
+  if(!hardwareTestAvailable_ || !ctl.robot().hasGripper(rightGripper_))
+  {
+    hardwareTestArmRequest_.clear();
+    hardwareTestDisarmRequested_ = false;
+    return;
+  }
+  auto & gripper = ctl.robot().gripper(rightGripper_);
+  if(hardwareTestAvailable_ && right_.gripperReady)
+  {
+    const auto actual = gripper.curPosition();
+    if(actual.size() == leapActualQ_.size()) { leapActualQ_ = actual; }
+  }
+
   if(hardwareTestDisarmRequested_)
   {
     hardwareTestDisarmRequested_ = false;
     hardwareTestArmRequest_.clear();
-    disarmHardwareTest("DISARMED - holding the last commanded opening");
+    if(hardwareTestArmed_ && leapActualQ_.size() == leapJointNames_.size()) { gripper.setTargetQ(leapActualQ_); }
+    disarmHardwareTest("DISARMED - holding the measured hand pose");
     return;
   }
 
-  if(hardwareTestArmRequest_.empty())
+  if(!hardwareTestArmRequest_.empty())
   {
-    return;
-  }
-
-  const std::string requestedSide = hardwareTestArmRequest_;
-  hardwareTestArmRequest_.clear();
-  if(!hardwareTestAvailable_)
-  {
-    hardwareTestStatus_ = "ARM rejected: hardware test is unavailable for this controller";
-    mc_rtc::log::warning("[{}] {}", name(), hardwareTestStatus_);
-    return;
-  }
-  if(trackingStarted_)
-  {
-    hardwareTestStatus_ = "ARM rejected: pause VIVE tracking first";
-    mc_rtc::log::warning("[{}] {}", name(), hardwareTestStatus_);
-    return;
-  }
-
-  HandState * hand = nullptr;
-  std::string gripperName;
-  if(requestedSide == "left")
-  {
-    hand = &left_;
-    gripperName = leftGripper_;
-  }
-  else if(requestedSide == "right")
-  {
-    hand = &right_;
-    gripperName = rightGripper_;
-  }
-  else
-  {
-    hardwareTestStatus_ = "ARM rejected: invalid hand selection";
-    mc_rtc::log::error("[{}] {}", name(), hardwareTestStatus_);
-    return;
-  }
-
-  if(!hand->gripperReady || !ctl.robot().hasGripper(gripperName))
-  {
-    hardwareTestStatus_ = "ARM rejected: " + requestedSide + " gripper is not ready";
-    mc_rtc::log::error("[{}] {}", name(), hardwareTestStatus_);
-    return;
-  }
-
-  const double sliderMin = std::min(openValue_, closedValue_);
-  const double sliderMax = std::max(openValue_, closedValue_);
-  const auto currentOpenings = ctl.robot().gripper(gripperName).curOpening();
-  double currentOpeningMean = openValue_;
-  if(!currentOpenings.empty())
-  {
-    currentOpeningMean = 0.0;
-    for(const double opening : currentOpenings)
+    const std::string requestedSide = hardwareTestArmRequest_;
+    hardwareTestArmRequest_.clear();
+    if(hardwareTestArmed_)
     {
-      currentOpeningMean += opening;
+      hardwareTestStatus_ = "already ARMED; disarm before arming again";
+      return;
     }
-    currentOpeningMean /= static_cast<double>(currentOpenings.size());
+    if(!hardwareTestAvailable_)
+    {
+      hardwareTestStatus_ = "ARM rejected: LEAP tuning is unavailable for this controller";
+      mc_rtc::log::warning("[{}] {}", name(), hardwareTestStatus_);
+      return;
+    }
+    if(trackingStarted_)
+    {
+      hardwareTestStatus_ = "ARM rejected: pause VIVE tracking first";
+      mc_rtc::log::warning("[{}] {}", name(), hardwareTestStatus_);
+      return;
+    }
+    if(requestedSide != "right" || !right_.gripperReady || !ctl.robot().hasGripper(rightGripper_))
+    {
+      hardwareTestStatus_ = "ARM rejected: right LEAP hand is not ready";
+      mc_rtc::log::error("[{}] {}", name(), hardwareTestStatus_);
+      return;
+    }
+    leapActualQ_ = gripper.curPosition();
+    if(leapActualQ_.size() != leapJointNames_.size())
+    {
+      hardwareTestStatus_ = "ARM rejected: actual LEAP joint vector has the wrong size";
+      mc_rtc::log::error("[{}] {}", name(), hardwareTestStatus_);
+      return;
+    }
+    leapEditorQ_ = leapActualQ_;
+    leapCapturedQ_ = leapActualQ_;
+    leapCommandQ_ = leapActualQ_;
+    leapApplyFromQ_ = leapActualQ_;
+    leapApplyToQ_ = leapActualQ_;
+    for(size_t group = 0; group < leapQuickLowQ_.size(); ++group)
+    {
+      leapQuickLowQ_[group] = leapActualQ_;
+      leapQuickHighQ_[group] = leapActualQ_;
+      leapQuickPercent_[group] = 0.0;
+    }
+    hardwareTestSide_ = "right";
+    hardwareTestArmed_ = true;
+    hardwareTestCommandActive_ = false;
+    hardwareTestApplying_ = false;
+    hardwareTestApplyProgress_ = 0.0;
+    leapActiveCandidate_ = "custom/current";
+    hardwareTestStatus_ = "ARMED; sliders edit only. Use APPLY SLOWLY to move";
+    recordHardwareTestEvent("right LEAP editor armed from measured pose");
   }
-  hardwareTestOpening_ = std::clamp(currentOpeningMean, sliderMin, sliderMax);
-  hardwareTestSide_ = requestedSide;
-  hardwareTestArmed_ = true;
-  hardwareTestCommandActive_ = false;
-  hardwareTestStatus_ = "ARMED " + requestedSide + "; no motion until slider or a preset button is used";
-  mc_rtc::log::warning("[{}] RViz-only LEAP hardware test armed without commanding motion: hand={}, mean opening={:.3f}",
-                       name(), requestedSide, hardwareTestOpening_);
+
+  auto rejectIfDisarmed = [this](const std::string & action)
+  {
+    if(hardwareTestArmed_) { return false; }
+    hardwareTestStatus_ = action + " ignored while DISARMED";
+    return true;
+  };
+
+  if(hardwareTestCaptureRequested_)
+  {
+    hardwareTestCaptureRequested_ = false;
+    if(!rejectIfDisarmed("CAPTURE"))
+    {
+      leapEditorQ_ = leapActualQ_;
+      leapCapturedQ_ = leapActualQ_;
+      leapActiveCandidate_ = "captured actual";
+      hardwareTestStatus_ = "captured measured pose into editor; no motion commanded";
+      recordHardwareTestEvent("captured measured LEAP pose into editor");
+    }
+  }
+  if(hardwareTestRestoreRequested_)
+  {
+    hardwareTestRestoreRequested_ = false;
+    if(!rejectIfDisarmed("RESTORE"))
+    {
+      leapEditorQ_ = leapCapturedQ_;
+      leapActiveCandidate_ = "captured actual";
+      hardwareTestStatus_ = "restored captured pose into editor; no motion commanded";
+      recordHardwareTestEvent("restored captured LEAP pose into editor");
+    }
+  }
+  if(hardwareTestHoldRequested_)
+  {
+    hardwareTestHoldRequested_ = false;
+    if(!rejectIfDisarmed("HOLD"))
+    {
+      leapEditorQ_ = leapActualQ_;
+      leapCommandQ_ = leapActualQ_;
+      hardwareTestApplying_ = false;
+      hardwareTestCommandActive_ = true;
+      hardwareTestApplyProgress_ = 0.0;
+      gripper.setTargetQ(leapCommandQ_);
+      leapActiveCandidate_ = "held actual";
+      hardwareTestStatus_ = "HOLDING measured hand pose";
+      recordHardwareTestEvent("LEAP hold-now command");
+    }
+  }
+
+  if(leapCandidateSaveRequest_ >= 0)
+  {
+    const int slot = leapCandidateSaveRequest_;
+    leapCandidateSaveRequest_ = -1;
+    if(!rejectIfDisarmed("SAVE") && slot < static_cast<int>(leapCandidateQ_.size()))
+    {
+      leapCandidateQ_[static_cast<size_t>(slot)] = leapEditorQ_;
+      leapCandidateValid_[static_cast<size_t>(slot)] = true;
+      const std::string label(1, static_cast<char>('A' + slot));
+      leapActiveCandidate_ = label;
+      hardwareTestStatus_ = "saved editor target to candidate " + label + "; session memory only";
+      recordHardwareTestEvent("saved LEAP candidate " + label);
+    }
+  }
+  if(leapCandidateLoadRequest_ >= 0)
+  {
+    const int slot = leapCandidateLoadRequest_;
+    leapCandidateLoadRequest_ = -1;
+    if(!rejectIfDisarmed("LOAD") && slot < static_cast<int>(leapCandidateQ_.size()))
+    {
+      const size_t index = static_cast<size_t>(slot);
+      const std::string label(1, static_cast<char>('A' + slot));
+      if(!leapCandidateValid_[index]) { hardwareTestStatus_ = "candidate " + label + " is empty"; }
+      else
+      {
+        leapEditorQ_ = leapCandidateQ_[index];
+        leapActiveCandidate_ = label;
+        hardwareTestStatus_ = "loaded candidate " + label + " into editor; no motion commanded";
+        recordHardwareTestEvent("loaded LEAP candidate " + label);
+      }
+    }
+  }
+
+  if(hardwareTestApplyRequested_)
+  {
+    hardwareTestApplyRequested_ = false;
+    if(!rejectIfDisarmed("APPLY"))
+    {
+      leapActualQ_ = gripper.curPosition();
+      leapApplyFromQ_ = leapActualQ_;
+      leapApplyToQ_ = leapEditorQ_;
+      leapCommandQ_ = leapActualQ_;
+      hardwareTestApplyStartTime_ = now();
+      hardwareTestApplyProgress_ = 0.0;
+      hardwareTestApplying_ = true;
+      hardwareTestCommandActive_ = true;
+      hardwareTestStatus_ = "APPLYING editor target slowly";
+      recordHardwareTestEvent("started slow LEAP target application");
+    }
+  }
 }
 
 void ViveHandBridge::updateHardwareTestGripper(mc_control::fsm::Controller & ctl)
 {
-  if(!hardwareTestAvailable_ || !hardwareTestArmed_ || !hardwareTestCommandActive_ || trackingStarted_)
+  if(!hardwareTestAvailable_ || !ctl.robot().hasGripper(rightGripper_)) { return; }
+  auto & gripper = ctl.robot().gripper(rightGripper_);
+  const auto actual = gripper.curPosition();
+  if(actual.size() == leapActualQ_.size()) { leapActualQ_ = actual; }
+  if(!hardwareTestArmed_ || !hardwareTestCommandActive_ || trackingStarted_) { return; }
+  if(!right_.gripperReady || leapCommandQ_.size() != leapJointNames_.size())
   {
+    disarmHardwareTest("automatically disarmed because the right LEAP hand is no longer ready");
     return;
   }
 
-  HandState * hand = hardwareTestSide_ == "left" ? &left_ : (hardwareTestSide_ == "right" ? &right_ : nullptr);
-  const std::string & gripperName = hardwareTestSide_ == "left" ? leftGripper_ : rightGripper_;
-  if(!hand || !hand->gripperReady || !ctl.robot().hasGripper(gripperName))
+  if(hardwareTestApplying_)
   {
-    disarmHardwareTest("automatically disarmed because the selected gripper is no longer ready");
-    return;
+    const double ratio = std::clamp((now() - hardwareTestApplyStartTime_) / hardwareTestApplyDuration_, 0.0, 1.0);
+    const double smoothRatio = ratio * ratio * (3.0 - 2.0 * ratio);
+    hardwareTestApplyProgress_ = ratio;
+    for(size_t i = 0; i < leapCommandQ_.size(); ++i)
+    {
+      leapCommandQ_[i] = (1.0 - smoothRatio) * leapApplyFromQ_[i] + smoothRatio * leapApplyToQ_[i];
+    }
+    if(ratio >= 1.0)
+    {
+      hardwareTestApplying_ = false;
+      hardwareTestStatus_ = "target reached; HOLDING applied hand pose";
+      recordHardwareTestEvent("completed slow LEAP target application");
+    }
   }
-
-  const double sliderMin = std::min(openValue_, closedValue_);
-  const double sliderMax = std::max(openValue_, closedValue_);
-  hardwareTestOpening_ = std::clamp(hardwareTestOpening_, sliderMin, sliderMax);
-  ctl.robot().gripper(gripperName).setTargetOpening(hardwareTestOpening_);
+  gripper.setTargetQ(leapCommandQ_);
 }
 
 void ViveHandBridge::disarmHardwareTest(const std::string & reason)
 {
-  if(hardwareTestArmed_)
-  {
-    mc_rtc::log::warning("[{}] RViz-only LEAP hardware test disarmed: {}", name(), reason);
-  }
+  if(hardwareTestArmed_) { mc_rtc::log::warning("[{}] RViz-only LEAP hardware test disarmed: {}", name(), reason); }
   hardwareTestArmed_ = false;
   hardwareTestCommandActive_ = false;
+  hardwareTestApplying_ = false;
+  hardwareTestApplyProgress_ = 0.0;
   hardwareTestSide_ = "none";
   hardwareTestStatus_ = reason;
 }
 
-void ViveHandBridge::updateGrippers(mc_control::fsm::Controller & ctl)
+bool ViveHandBridge::initializeLeapHandTuning(mc_control::fsm::Controller & ctl)
 {
-  if(!controlGrippers_)
+  const std::vector<std::string> expected = {"R_MCP_1",     "R_PIP_1",     "R_DIP_1",     "R_FINGERTIP_1",
+                                             "R_MCP_2",     "R_PIP_2",     "R_DIP_2",     "R_FINGERTIP_2",
+                                             "R_MCP_3",     "R_PIP_3",     "R_DIP_3",     "R_FINGERTIP_3",
+                                             "R_THUMB_CMC", "R_THUMB_PIP", "R_THUMB_DIP", "R_THUMB_FINGERTIP"};
+  if(!right_.gripperReady || !ctl.robot().hasGripper(rightGripper_))
   {
+    hardwareTestStatus_ = "unavailable: right LEAP gripper is not ready";
+    mc_rtc::log::error("[{}] {}", name(), hardwareTestStatus_);
+    return false;
+  }
+  auto & gripper = ctl.robot().gripper(rightGripper_);
+  if(gripper.activeJoints() != expected)
+  {
+    hardwareTestStatus_ = "unavailable: right LEAP joint order does not match the verified 16-joint model";
+    mc_rtc::log::error("[{}] {}", name(), hardwareTestStatus_);
+    return false;
+  }
+  leapJointNames_ = expected;
+  leapActualQ_ = gripper.curPosition();
+  if(leapActualQ_.size() != leapJointNames_.size())
+  {
+    hardwareTestStatus_ = "unavailable: right LEAP actual joint vector has the wrong size";
+    mc_rtc::log::error("[{}] {}", name(), hardwareTestStatus_);
+    return false;
+  }
+  leapJointMinimum_.clear();
+  leapJointMaximum_.clear();
+  for(const auto & joint : leapJointNames_)
+  {
+    if(!ctl.robot().hasJoint(joint))
+    {
+      hardwareTestStatus_ = "unavailable: robot model is missing " + joint;
+      mc_rtc::log::error("[{}] {}", name(), hardwareTestStatus_);
+      return false;
+    }
+    const auto index = ctl.robot().jointIndexByName(joint);
+    if(ctl.robot().ql().at(index).empty() || ctl.robot().qu().at(index).empty())
+    {
+      hardwareTestStatus_ = "unavailable: robot model has no scalar limit for " + joint;
+      mc_rtc::log::error("[{}] {}", name(), hardwareTestStatus_);
+      return false;
+    }
+    leapJointMinimum_.push_back(ctl.robot().ql().at(index).front());
+    leapJointMaximum_.push_back(ctl.robot().qu().at(index).front());
+  }
+  leapEditorQ_ = leapActualQ_;
+  leapCapturedQ_ = leapActualQ_;
+  leapCommandQ_ = leapActualQ_;
+  leapApplyFromQ_ = leapActualQ_;
+  leapApplyToQ_ = leapActualQ_;
+  for(size_t group = 0; group < leapQuickLowQ_.size(); ++group)
+  {
+    leapQuickLowQ_[group] = leapActualQ_;
+    leapQuickHighQ_[group] = leapActualQ_;
+  }
+  return true;
+}
+
+void ViveHandBridge::addLeapHandTuningGui(mc_control::fsm::Controller & ctl)
+{
+  const std::vector<std::string> root = {"Avatar", "LEAP Grasp Tuning", "Right Hand"};
+  ctl.gui()->addElement(
+      this, root,
+      mc_rtc::gui::Label(
+          "Purpose",
+          []() { return std::string("RViz-only 16-joint LEAP grasp editor; no SteamVR or trackers required"); }),
+      mc_rtc::gui::Label(
+          "Safety",
+          []() {
+            return std::string(
+                "Sliders edit targets only. Motion requires APPLY SLOWLY. VIVE start auto-disarms tuning");
+          }),
+      mc_rtc::gui::Label("Status", [this]() -> const std::string & { return hardwareTestStatus_; }),
+      mc_rtc::gui::Label("Last event", [this]() -> const std::string & { return hardwareTestLastEvent_; }),
+      mc_rtc::gui::Label("Event sequence", [this]() { return std::to_string(hardwareTestEventSequence_); }),
+      mc_rtc::gui::Label("Armed", [this]() { return hardwareTestArmed_; }),
+      mc_rtc::gui::Label("Applying", [this]() { return hardwareTestApplying_; }),
+      mc_rtc::gui::Label("Apply progress", [this]() { return hardwareTestApplyProgress_; }),
+      mc_rtc::gui::Label("Editor source", [this]() -> const std::string & { return leapActiveCandidate_; }),
+      mc_rtc::gui::NumberSlider(
+          "Slow apply duration [s]", [this]() { return hardwareTestApplyDuration_; },
+          [this](double value) { hardwareTestApplyDuration_ = std::clamp(value, 1.0, 15.0); }, 1.0, 15.0),
+      mc_rtc::gui::Button("ARM RIGHT HAND EDITOR", [this]() { hardwareTestArmRequest_ = "right"; }),
+      mc_rtc::gui::Button("CAPTURE ACTUAL INTO EDITOR", [this]() { hardwareTestCaptureRequested_ = true; }),
+      mc_rtc::gui::Button("APPLY EDITOR SLOWLY", [this]() { hardwareTestApplyRequested_ = true; }),
+      mc_rtc::gui::Button("HOLD NOW", [this]() { hardwareTestHoldRequested_ = true; }),
+      mc_rtc::gui::Button("RESTORE CAPTURED TO EDITOR", [this]() { hardwareTestRestoreRequested_ = true; }),
+      mc_rtc::gui::Button("DISARM AND HOLD", [this]() { hardwareTestDisarmRequested_ = true; }));
+
+  for(size_t slot = 0; slot < leapCandidateQ_.size(); ++slot)
+  {
+    const std::string label(1, static_cast<char>('A' + slot));
+    const std::vector<std::string> category = {"Avatar", "LEAP Grasp Tuning", "Right Hand", "Candidate " + label};
+    ctl.gui()->addElement(
+        this, category, mc_rtc::gui::Label("Saved this session", [this, slot]() { return leapCandidateValid_[slot]; }),
+        mc_rtc::gui::Button("SAVE EDITOR AS " + label,
+                            [this, slot]() { leapCandidateSaveRequest_ = static_cast<int>(slot); }),
+        mc_rtc::gui::Button("LOAD " + label + " INTO EDITOR",
+                            [this, slot]() { leapCandidateLoadRequest_ = static_cast<int>(slot); }));
+  }
+
+  const std::array<std::string, 4> groupNames = {"Finger 1", "Finger 2", "Finger 3", "Thumb"};
+  for(size_t group = 0; group < groupNames.size(); ++group)
+  {
+    const std::vector<std::string> category = {"Avatar", "LEAP Grasp Tuning", "Right Hand", groupNames[group]};
+    ctl.gui()->addElement(
+        this, category,
+        mc_rtc::gui::Label("0% endpoint [deg]", [this, group]() { return leapGroupPoseSummary(group, false); }),
+        mc_rtc::gui::Label("100% endpoint [deg]", [this, group]() { return leapGroupPoseSummary(group, true); }),
+        mc_rtc::gui::NumberSlider(
+            "Quick interpolation [%]", [this, group]() { return leapQuickPercent_[group]; },
+            [this, group](double value) { applyLeapQuickInterpolation(group, value); }, 0.0, 100.0),
+        mc_rtc::gui::Button("SET 0% FROM EDITOR", [this, group]() { setLeapQuickEndpoint(group, false); }),
+        mc_rtc::gui::Button("SET 100% FROM EDITOR", [this, group]() { setLeapQuickEndpoint(group, true); }));
+
+    for(size_t local = 0; local < 4; ++local)
+    {
+      const size_t index = 4 * group + local;
+      const std::string & joint = leapJointNames_[index];
+      ctl.gui()->addElement(
+          this, category,
+          mc_rtc::gui::Label(joint + " actual [deg]",
+                             [this, index]() { return mc_rtc::constants::toDeg(leapActualQ_.at(index)); }),
+          mc_rtc::gui::NumberSlider(
+              joint + " target [deg]", [this, index]() { return mc_rtc::constants::toDeg(leapEditorQ_.at(index)); },
+              [this, index](double value)
+              {
+                if(!hardwareTestArmed_)
+                {
+                  hardwareTestStatus_ = "joint edit ignored while DISARMED";
+                  return;
+                }
+                leapEditorQ_[index] =
+                    std::clamp(mc_rtc::constants::toRad(value), leapJointMinimum_[index], leapJointMaximum_[index]);
+                leapActiveCandidate_ = "custom";
+                hardwareTestStatus_ = "editor changed; no motion until APPLY SLOWLY";
+              },
+              mc_rtc::constants::toDeg(leapJointMinimum_[index]), mc_rtc::constants::toDeg(leapJointMaximum_[index])));
+    }
+  }
+}
+
+void ViveHandBridge::addLeapHandTuningLogs(mc_control::fsm::Controller & ctl)
+{
+  const std::string prefix = name() + "_leap-tuning_";
+  ctl.logger().addLogEntry(prefix + "armed", this, [this]() { return hardwareTestArmed_; });
+  ctl.logger().addLogEntry(prefix + "applying", this, [this]() { return hardwareTestApplying_; });
+  ctl.logger().addLogEntry(prefix + "apply-progress", this, [this]() { return hardwareTestApplyProgress_; });
+  ctl.logger().addLogEntry(prefix + "apply-duration-s", this, [this]() { return hardwareTestApplyDuration_; });
+  ctl.logger().addLogEntry(prefix + "event-sequence", this, [this]() { return hardwareTestEventSequence_; });
+  ctl.logger().addLogEntry(prefix + "last-event", this,
+                           [this]() -> const std::string & { return hardwareTestLastEvent_; });
+  ctl.logger().addLogEntry(prefix + "editor-source", this,
+                           [this]() -> const std::string & { return leapActiveCandidate_; });
+  for(size_t group = 0; group < leapQuickPercent_.size(); ++group)
+  {
+    ctl.logger().addLogEntry(prefix + "quick-percent-" + std::to_string(group + 1), this,
+                             [this, group]() { return leapQuickPercent_[group]; });
+  }
+  for(size_t index = 0; index < leapJointNames_.size(); ++index)
+  {
+    const std::string key = prefix + leapJointNames_[index];
+    ctl.logger().addLogEntry(key + "-actual-rad", this, [this, index]() { return leapActualQ_[index]; });
+    ctl.logger().addLogEntry(key + "-editor-rad", this, [this, index]() { return leapEditorQ_[index]; });
+    ctl.logger().addLogEntry(key + "-command-rad", this, [this, index]() { return leapCommandQ_[index]; });
+  }
+}
+
+void ViveHandBridge::setLeapQuickEndpoint(size_t group, bool high)
+{
+  if(!hardwareTestArmed_ || group >= leapQuickLowQ_.size())
+  {
+    hardwareTestStatus_ = "quick endpoint edit ignored while DISARMED";
     return;
   }
+  (high ? leapQuickHighQ_[group] : leapQuickLowQ_[group]) = leapEditorQ_;
+  hardwareTestStatus_ =
+      std::string("saved ") + (high ? "100%" : "0%") + " endpoint for finger group; no motion commanded";
+  recordHardwareTestEvent(std::string("saved LEAP quick ") + (high ? "100%" : "0%") + " endpoint for group "
+                          + std::to_string(group + 1));
+}
+
+void ViveHandBridge::applyLeapQuickInterpolation(size_t group, double percent)
+{
+  if(!hardwareTestArmed_ || group >= leapQuickPercent_.size())
+  {
+    hardwareTestStatus_ = "quick interpolation ignored while DISARMED";
+    return;
+  }
+  leapQuickPercent_[group] = std::clamp(percent, 0.0, 100.0);
+  const double ratio = leapQuickPercent_[group] / 100.0;
+  for(size_t local = 0; local < 4; ++local)
+  {
+    const size_t index = 4 * group + local;
+    leapEditorQ_[index] = (1.0 - ratio) * leapQuickLowQ_[group][index] + ratio * leapQuickHighQ_[group][index];
+  }
+  leapActiveCandidate_ = "custom quick interpolation";
+  hardwareTestStatus_ = "quick target changed; no motion until APPLY SLOWLY";
+}
+
+std::string ViveHandBridge::leapGroupPoseSummary(size_t group, bool high) const
+{
+  if(group >= leapQuickLowQ_.size()) { return "n/a"; }
+  const auto & pose = high ? leapQuickHighQ_[group] : leapQuickLowQ_[group];
+  if(pose.size() != leapJointNames_.size()) { return "n/a"; }
+  std::ostringstream out;
+  out << std::fixed << std::setprecision(1);
+  for(size_t local = 0; local < 4; ++local)
+  {
+    if(local > 0) { out << ", "; }
+    out << mc_rtc::constants::toDeg(pose[4 * group + local]);
+  }
+  return out.str();
+}
+
+void ViveHandBridge::recordHardwareTestEvent(const std::string & event)
+{
+  hardwareTestLastEvent_ = event;
+  ++hardwareTestEventSequence_;
+  mc_rtc::log::info("[{}] LEAP/arm tuning event {}: {}", name(), hardwareTestEventSequence_, event);
+}
+
+bool ViveHandBridge::initializeRightArmTuning(mc_control::fsm::Controller & ctl)
+{
+  rightArmJointNames_ = {"R_SHOULDER_P", "R_SHOULDER_R", "R_SHOULDER_Y", "R_ELBOW_P",
+                         "R_ELBOW_Y",    "R_WRIST_R",    "R_WRIST_Y"};
+  if(!right_.task || !rightArm_.task || !ctl.getPostureTask(ctl.robot().name()))
+  {
+    rightArmTestStatus_ = "unavailable: right retargetting or posture task is missing";
+    mc_rtc::log::error("[{}] {}", name(), rightArmTestStatus_);
+    return false;
+  }
+  if(rightArmDefaultPose_.size() != rightArmJointNames_.size())
+  {
+    rightArmTestStatus_ = "unavailable: right_arm_tuning_pose_deg must contain seven values";
+    mc_rtc::log::error("[{}] {}", name(), rightArmTestStatus_);
+    return false;
+  }
+  rightArmJointMinimum_.clear();
+  rightArmJointMaximum_.clear();
+  rightArmActualQ_.clear();
+  for(const auto & joint : rightArmJointNames_)
+  {
+    if(!ctl.robot().hasJoint(joint))
+    {
+      rightArmTestStatus_ = "unavailable: robot model is missing " + joint;
+      mc_rtc::log::error("[{}] {}", name(), rightArmTestStatus_);
+      return false;
+    }
+    const auto index = ctl.robot().jointIndexByName(joint);
+    if(ctl.robot().mbc().q.at(index).empty() || ctl.robot().ql().at(index).empty()
+       || ctl.robot().qu().at(index).empty())
+    {
+      rightArmTestStatus_ = "unavailable: robot model has no scalar coordinate for " + joint;
+      mc_rtc::log::error("[{}] {}", name(), rightArmTestStatus_);
+      return false;
+    }
+    rightArmActualQ_.push_back(ctl.robot().mbc().q.at(index).front());
+    rightArmJointMinimum_.push_back(ctl.robot().ql().at(index).front());
+    rightArmJointMaximum_.push_back(ctl.robot().qu().at(index).front());
+  }
+  for(size_t i = 0; i < rightArmDefaultPose_.size(); ++i)
+  {
+    rightArmDefaultPose_[i] = std::clamp(rightArmDefaultPose_[i], rightArmJointMinimum_[i], rightArmJointMaximum_[i]);
+  }
+  rightArmEditorQ_ = rightArmActualQ_;
+  rightArmCapturedQ_ = rightArmActualQ_;
+  rightArmCommandQ_ = rightArmActualQ_;
+  rightArmApplyFromQ_ = rightArmActualQ_;
+  rightArmApplyToQ_ = rightArmActualQ_;
+  return true;
+}
+
+void ViveHandBridge::addRightArmTuningGui(mc_control::fsm::Controller & ctl)
+{
+  const std::vector<std::string> root = {"Avatar", "LEAP Grasp Tuning", "Right Arm"};
+  ctl.gui()->addElement(
+      this, root,
+      mc_rtc::gui::Label("Purpose", []()
+                         { return std::string("Hold a repeatable right-arm test pose while tuning the LEAP hand"); }),
+      mc_rtc::gui::Label(
+          "Safety",
+          []()
+          {
+            return std::string(
+                "Sliders edit targets only. ARM freezes the measured pose. APPLY moves with smooth interpolation");
+          }),
+      mc_rtc::gui::Label("Status", [this]() -> const std::string & { return rightArmTestStatus_; }),
+      mc_rtc::gui::Label("Armed", [this]() { return rightArmTestArmed_; }),
+      mc_rtc::gui::Label("Applying", [this]() { return rightArmTestApplying_; }),
+      mc_rtc::gui::Label("Apply progress", [this]() { return rightArmTestApplyProgress_; }),
+      mc_rtc::gui::NumberSlider(
+          "Slow apply duration [s]", [this]() { return rightArmTestApplyDuration_; },
+          [this](double value) { rightArmTestApplyDuration_ = std::clamp(value, 1.0, 20.0); }, 1.0, 20.0),
+      mc_rtc::gui::Button("ARM RIGHT ARM EDITOR", [this]() { rightArmTestArmRequested_ = true; }),
+      mc_rtc::gui::Button("CAPTURE ACTUAL INTO EDITOR", [this]() { rightArmTestCaptureRequested_ = true; }),
+      mc_rtc::gui::Button("LOAD DEFAULT FRONT POSE", [this]() { rightArmTestLoadDefaultRequested_ = true; }),
+      mc_rtc::gui::Button("APPLY EDITOR SLOWLY", [this]() { rightArmTestApplyRequested_ = true; }),
+      mc_rtc::gui::Button("HOLD NOW", [this]() { rightArmTestHoldRequested_ = true; }),
+      mc_rtc::gui::Button("RESTORE CAPTURED TO EDITOR", [this]() { rightArmTestRestoreRequested_ = true; }),
+      mc_rtc::gui::Button("DISARM AND HOLD", [this]() { rightArmTestDisarmRequested_ = true; }));
+
+  for(size_t index = 0; index < rightArmJointNames_.size(); ++index)
+  {
+    const std::string & joint = rightArmJointNames_[index];
+    ctl.gui()->addElement(
+        this, root,
+        mc_rtc::gui::Label(joint + " actual [deg]",
+                           [this, index]() { return mc_rtc::constants::toDeg(rightArmActualQ_.at(index)); }),
+        mc_rtc::gui::NumberSlider(
+            joint + " target [deg]", [this, index]() { return mc_rtc::constants::toDeg(rightArmEditorQ_.at(index)); },
+            [this, index](double value)
+            {
+              if(!rightArmTestArmed_)
+              {
+                rightArmTestStatus_ = "joint edit ignored while DISARMED";
+                return;
+              }
+              rightArmEditorQ_[index] = std::clamp(mc_rtc::constants::toRad(value), rightArmJointMinimum_[index],
+                                                   rightArmJointMaximum_[index]);
+              rightArmTestStatus_ = "editor changed; no motion until APPLY SLOWLY";
+            },
+            mc_rtc::constants::toDeg(rightArmJointMinimum_[index]),
+            mc_rtc::constants::toDeg(rightArmJointMaximum_[index])));
+  }
+}
+
+void ViveHandBridge::addRightArmTuningLogs(mc_control::fsm::Controller & ctl)
+{
+  const std::string prefix = name() + "_right-arm-tuning_";
+  ctl.logger().addLogEntry(prefix + "armed", this, [this]() { return rightArmTestArmed_; });
+  ctl.logger().addLogEntry(prefix + "applying", this, [this]() { return rightArmTestApplying_; });
+  ctl.logger().addLogEntry(prefix + "apply-progress", this, [this]() { return rightArmTestApplyProgress_; });
+  ctl.logger().addLogEntry(prefix + "apply-duration-s", this, [this]() { return rightArmTestApplyDuration_; });
+  for(size_t index = 0; index < rightArmJointNames_.size(); ++index)
+  {
+    const std::string key = prefix + rightArmJointNames_[index];
+    ctl.logger().addLogEntry(key + "-actual-rad", this, [this, index]() { return rightArmActualQ_[index]; });
+    ctl.logger().addLogEntry(key + "-editor-rad", this, [this, index]() { return rightArmEditorQ_[index]; });
+    ctl.logger().addLogEntry(key + "-command-rad", this, [this, index]() { return rightArmCommandQ_[index]; });
+  }
+}
+
+void ViveHandBridge::processRightArmTestRequests(mc_control::fsm::Controller & ctl)
+{
+  auto updateActual = [this, &ctl]()
+  {
+    for(size_t i = 0; i < rightArmJointNames_.size(); ++i)
+    {
+      const auto index = ctl.robot().jointIndexByName(rightArmJointNames_[i]);
+      rightArmActualQ_[i] = ctl.robot().mbc().q.at(index).front();
+    }
+  };
+  if(rightArmTestAvailable_) { updateActual(); }
+
+  if(rightArmTestDisarmRequested_)
+  {
+    rightArmTestDisarmRequested_ = false;
+    disarmRightArmTest(ctl, "DISARMED - holding the measured right-arm pose");
+    return;
+  }
+  if(rightArmTestArmRequested_)
+  {
+    rightArmTestArmRequested_ = false;
+    if(rightArmTestArmed_)
+    {
+      rightArmTestStatus_ = "already ARMED; disarm before arming again";
+      return;
+    }
+    if(!rightArmTestAvailable_ || trackingStarted_ || !right_.task || !rightArm_.task)
+    {
+      rightArmTestStatus_ = trackingStarted_ ? "ARM rejected: pause VIVE tracking first"
+                                             : "ARM rejected: right-arm tasks are unavailable";
+      mc_rtc::log::warning("[{}] {}", name(), rightArmTestStatus_);
+      return;
+    }
+    auto posture = ctl.getPostureTask(ctl.robot().name());
+    if(!posture)
+    {
+      rightArmTestStatus_ = "ARM rejected: posture task is unavailable";
+      return;
+    }
+    updateActual();
+    rightArmEditorQ_ = rightArmActualQ_;
+    rightArmCapturedQ_ = rightArmActualQ_;
+    rightArmCommandQ_ = rightArmActualQ_;
+    rightArmApplyFromQ_ = rightArmActualQ_;
+    rightArmApplyToQ_ = rightArmActualQ_;
+    rightHandTaskWeightBeforeTest_ = right_.task->weight();
+    rightArmTaskWeightBeforeTest_ = rightArm_.task->weight();
+    right_.task->weight(0.0);
+    rightArm_.task->weight(0.0);
+    if(rightShoulderOverrideTask_)
+    {
+      rightShoulderOverrideWeightBeforeTest_ = rightShoulderOverrideTask_->weight();
+      rightShoulderOverrideTask_->weight(0.0);
+    }
+    std::map<std::string, std::vector<double>> targets;
+    for(size_t i = 0; i < rightArmJointNames_.size(); ++i) { targets[rightArmJointNames_[i]] = {rightArmActualQ_[i]}; }
+    posture->target(targets);
+    rightArmTestArmed_ = true;
+    rightArmTestCommandActive_ = true;
+    rightArmTestApplying_ = false;
+    rightArmTestApplyProgress_ = 0.0;
+    rightArmTestStatus_ = "ARMED and holding measured pose; sliders edit only";
+    recordHardwareTestEvent("right arm editor armed from measured pose");
+  }
+
+  auto rejectIfDisarmed = [this](const std::string & action)
+  {
+    if(rightArmTestArmed_) { return false; }
+    rightArmTestStatus_ = action + " ignored while DISARMED";
+    return true;
+  };
+  if(rightArmTestCaptureRequested_)
+  {
+    rightArmTestCaptureRequested_ = false;
+    if(!rejectIfDisarmed("CAPTURE"))
+    {
+      updateActual();
+      rightArmEditorQ_ = rightArmActualQ_;
+      rightArmCapturedQ_ = rightArmActualQ_;
+      rightArmTestStatus_ = "captured measured arm pose into editor; no motion commanded";
+      recordHardwareTestEvent("captured measured right-arm pose into editor");
+    }
+  }
+  if(rightArmTestRestoreRequested_)
+  {
+    rightArmTestRestoreRequested_ = false;
+    if(!rejectIfDisarmed("RESTORE"))
+    {
+      rightArmEditorQ_ = rightArmCapturedQ_;
+      rightArmTestStatus_ = "restored captured arm pose into editor; no motion commanded";
+      recordHardwareTestEvent("restored captured right-arm pose into editor");
+    }
+  }
+  if(rightArmTestLoadDefaultRequested_)
+  {
+    rightArmTestLoadDefaultRequested_ = false;
+    if(!rejectIfDisarmed("LOAD DEFAULT"))
+    {
+      rightArmEditorQ_ = rightArmDefaultPose_;
+      rightArmTestStatus_ = "loaded default front pose into editor; no motion commanded";
+      recordHardwareTestEvent("loaded default right-arm front pose into editor");
+    }
+  }
+  if(rightArmTestHoldRequested_)
+  {
+    rightArmTestHoldRequested_ = false;
+    if(!rejectIfDisarmed("HOLD"))
+    {
+      updateActual();
+      rightArmEditorQ_ = rightArmActualQ_;
+      rightArmCommandQ_ = rightArmActualQ_;
+      rightArmTestApplying_ = false;
+      rightArmTestCommandActive_ = true;
+      rightArmTestApplyProgress_ = 0.0;
+      rightArmTestStatus_ = "HOLDING measured right-arm pose";
+      recordHardwareTestEvent("right-arm hold-now command");
+    }
+  }
+  if(rightArmTestApplyRequested_)
+  {
+    rightArmTestApplyRequested_ = false;
+    if(!rejectIfDisarmed("APPLY"))
+    {
+      updateActual();
+      rightArmApplyFromQ_ = rightArmActualQ_;
+      rightArmApplyToQ_ = rightArmEditorQ_;
+      rightArmCommandQ_ = rightArmActualQ_;
+      rightArmTestApplyStartTime_ = now();
+      rightArmTestApplyProgress_ = 0.0;
+      rightArmTestApplying_ = true;
+      rightArmTestCommandActive_ = true;
+      rightArmTestStatus_ = "APPLYING right-arm editor target slowly";
+      recordHardwareTestEvent("started slow right-arm target application");
+    }
+  }
+}
+
+void ViveHandBridge::updateRightArmTest(mc_control::fsm::Controller & ctl)
+{
+  if(!rightArmTestAvailable_) { return; }
+  for(size_t i = 0; i < rightArmJointNames_.size(); ++i)
+  {
+    const auto index = ctl.robot().jointIndexByName(rightArmJointNames_[i]);
+    rightArmActualQ_[i] = ctl.robot().mbc().q.at(index).front();
+  }
+  if(!rightArmTestArmed_ || !rightArmTestCommandActive_ || trackingStarted_) { return; }
+  if(rightArmTestApplying_)
+  {
+    const double ratio = std::clamp((now() - rightArmTestApplyStartTime_) / rightArmTestApplyDuration_, 0.0, 1.0);
+    const double smoothRatio = ratio * ratio * (3.0 - 2.0 * ratio);
+    rightArmTestApplyProgress_ = ratio;
+    for(size_t i = 0; i < rightArmCommandQ_.size(); ++i)
+    {
+      rightArmCommandQ_[i] = (1.0 - smoothRatio) * rightArmApplyFromQ_[i] + smoothRatio * rightArmApplyToQ_[i];
+    }
+    if(ratio >= 1.0)
+    {
+      rightArmTestApplying_ = false;
+      rightArmTestStatus_ = "target reached; HOLDING applied right-arm pose";
+      recordHardwareTestEvent("completed slow right-arm target application");
+    }
+  }
+  auto posture = ctl.getPostureTask(ctl.robot().name());
+  if(!posture)
+  {
+    disarmRightArmTest(ctl, "automatically disarmed because posture task disappeared");
+    return;
+  }
+  std::map<std::string, std::vector<double>> targets;
+  for(size_t i = 0; i < rightArmJointNames_.size(); ++i) { targets[rightArmJointNames_[i]] = {rightArmCommandQ_[i]}; }
+  posture->target(targets);
+}
+
+void ViveHandBridge::disarmRightArmTest(mc_control::fsm::Controller & ctl, const std::string & reason)
+{
+  if(!rightArmTestArmed_)
+  {
+    rightArmTestStatus_ = reason;
+    return;
+  }
+  for(size_t i = 0; i < rightArmJointNames_.size(); ++i)
+  {
+    const auto index = ctl.robot().jointIndexByName(rightArmJointNames_[i]);
+    rightArmActualQ_[i] = ctl.robot().mbc().q.at(index).front();
+  }
+  if(auto posture = ctl.getPostureTask(ctl.robot().name()))
+  {
+    std::map<std::string, std::vector<double>> targets;
+    for(size_t i = 0; i < rightArmJointNames_.size(); ++i) { targets[rightArmJointNames_[i]] = {rightArmActualQ_[i]}; }
+    posture->target(targets);
+  }
+  if(right_.task)
+  {
+    right_.zeroRobot = right_.task->frame().position();
+    right_.task->target(right_.zeroRobot);
+    right_.task->targetVel(sva::MotionVecd::Zero());
+    right_.task->weight(rightHandTaskWeightBeforeTest_);
+  }
+  if(rightArm_.task)
+  {
+    rightArm_.zeroRobot = rightArm_.task->frame().position();
+    rightArm_.task->target(rightArm_.zeroRobot);
+    rightArm_.task->targetVel(sva::MotionVecd::Zero());
+    rightArm_.task->weight(rightArmTaskWeightBeforeTest_);
+  }
+  if(rightShoulderOverrideTask_ && !rightArmActualQ_.empty())
+  {
+    rightShoulderOverrideTask_->target({{"R_SHOULDER_P", {rightArmActualQ_.front()}}});
+    rightShoulderOverrideTask_->weight(rightShoulderOverrideWeightBeforeTest_);
+  }
+  rightArmEditorQ_ = rightArmActualQ_;
+  rightArmCommandQ_ = rightArmActualQ_;
+  rightArmTestArmed_ = false;
+  rightArmTestCommandActive_ = false;
+  rightArmTestApplying_ = false;
+  rightArmTestApplyProgress_ = 0.0;
+  rightArmTestStatus_ = reason;
+  recordHardwareTestEvent("right arm editor disarmed: " + reason);
+}
+
+void ViveHandBridge::updateGrippers(mc_control::fsm::Controller & ctl)
+{
+  if(!controlGrippers_) { return; }
   // toggle_grip 在第一次 grip 上升沿之前不发送目标；analog_trigger 仅在 tracking
   // 已启动时激活。整夹具 opening 由 RobotModule 映射到 Sake2 或 LEAP 的所有主动关节。
-  auto update = [&](HandState & hand, const std::string & gripperName) {
+  auto update = [&](HandState & hand, const std::string & gripperName)
+  {
     if(!hand.hasData || !hand.gripperReady || !hand.gripperCommandActive || !ctl.robot().hasGripper(gripperName))
     {
       return;
