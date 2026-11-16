@@ -1161,6 +1161,9 @@ states:
     # User-defined staged hand test: measured pose -> A -> B -> C -> D.
     # These four values are seconds per transition and remain editable in RViz.
     leap_abcd_stage_durations: [5.0, 4.0, 4.0, 4.0]
+    # Scale only the thumb along the trigger-equivalent built-in A/B/C/D path.
+    # 1.0 exactly follows the existing whole-hand rear-trigger mapping.
+    leap_builtin_thumb_closure_scale: 1.0
     right_arm_tuning_apply_duration: 8.0
     # Seven RHPS1 right-arm joints, in the order documented by the RViz panel.
     # Loading this pose only changes the editor; a separate APPLY is required.

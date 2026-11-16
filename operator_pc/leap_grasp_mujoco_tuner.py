@@ -201,6 +201,7 @@ class TunerApp:
         self.sequence_duration_vars = [
             tk.DoubleVar(value=value) for value in (2.5, 2.0, 2.0, 2.0)
         ]
+        self.builtin_thumb_scale_var = tk.DoubleVar(value=100.0)
         self.sequence_status_var = tk.StringVar(value="Idle")
         self.sequence_progress_var = tk.StringVar(value="0.0%")
 
@@ -510,6 +511,19 @@ class TunerApp:
                 length=300,
             ).grid(row=row, column=1, columnspan=2, sticky="ew", padx=4)
             row += 1
+        ttk.Label(content, text="Built-in thumb closure scale [%]").grid(
+            row=row, column=0, sticky="w", padx=8, pady=2
+        )
+        tk.Scale(
+            content,
+            from_=0.0,
+            to=100.0,
+            orient="horizontal",
+            resolution=1.0,
+            variable=self.builtin_thumb_scale_var,
+            length=300,
+        ).grid(row=row, column=1, columnspan=2, sticky="ew", padx=4)
+        row += 1
         ttk.Button(
             content,
             text="Create built-in A/B/C/D from current hand",
@@ -755,41 +769,40 @@ class TunerApp:
         return result
 
     def create_builtin_candidates(self) -> None:
-        """Create a conservative normalized-range example without claiming grasp validity."""
+        """Create the same normalized closure path as the physical rear trigger."""
         if self.sequence_active:
             self.stop_sequence("Stopped sequence to replace A/B/C/D with built-in candidates.")
         base_pose = self.current_pose()
-        base_hand = {name: float(self.hand_vars[name].get()) for name in HAND_JOINTS}
-        hands = [dict(base_hand) for _ in range(4)]
-
-        def move_group_toward_lower(hand: Dict[str, float], group: str, fraction: float) -> None:
-            for name in HAND_GROUPS[group]:
-                lower, _upper = joint_limits_deg(self.model, name)
-                hand[name] = base_hand[name] + fraction * (lower - base_hand[name])
-
-        move_group_toward_lower(hands[0], "Finger 1", 0.05)
-        move_group_toward_lower(hands[0], "Thumb", 0.05)
-        move_group_toward_lower(hands[1], "Finger 1", 0.22)
-        move_group_toward_lower(hands[1], "Thumb", 0.18)
-        move_group_toward_lower(hands[2], "Finger 1", 0.45)
-        move_group_toward_lower(hands[2], "Thumb", 0.38)
-        move_group_toward_lower(hands[3], "Finger 1", 0.60)
-        move_group_toward_lower(hands[3], "Finger 2", 0.32)
-        move_group_toward_lower(hands[3], "Finger 3", 0.25)
-        move_group_toward_lower(hands[3], "Thumb", 0.52)
+        thumb_scale = clamp(float(self.builtin_thumb_scale_var.get()) / 100.0, 0.0, 1.0)
+        hands: List[Dict[str, float]] = []
+        for stage_closure in (0.25, 0.50, 0.75, 1.00):
+            hand: Dict[str, float] = {}
+            for name in HAND_JOINTS:
+                lower, upper = joint_limits_deg(self.model, name)
+                closure = stage_closure * (thumb_scale if name in HAND_GROUPS["Thumb"] else 1.0)
+                # RHPS1 registers the LEAP gripper with reverse_limits=true.
+                # With open_value=1 and closed_value=0 this is exactly the
+                # controller's setTargetOpening trajectory: lower -> upper.
+                hand[name] = lower + closure * (upper - lower)
+            hands.append(hand)
 
         saved_at = datetime.now().astimezone().isoformat(timespec="seconds")
         for label, hand in zip(("A", "B", "C", "D"), hands):
             pose = copy.deepcopy(base_pose)
             pose["hand_deg"] = {name: round(value, 3) for name, value in hand.items()}
             pose["saved_at"] = saved_at
-            pose["source"] = "conservative built-in ABCD generated from current hand"
+            pose["source"] = (
+                "trigger-equivalent built-in ABCD; "
+                f"thumb closure scale={100.0 * thumb_scale:.0f}%"
+            )
             self.store.candidates[label] = pose
         self.store.save()
         self._refresh_candidate_status()
-        self.sequence_status_var.set("Built-in A/B/C/D ready; press Play to preview.")
+        self.sequence_status_var.set(
+            f"Trigger-equivalent A/B/C/D ready; thumb scale {100.0 * thumb_scale:.0f}%; press Play."
+        )
         self._set_status(
-            "Created conservative local A/B/C/D from the current hand; slots were overwritten, no robot exists here."
+            "Created local 25/50/75/100% rear-trigger path; slots were overwritten, no robot exists here."
         )
 
     def start_sequence(self) -> None:

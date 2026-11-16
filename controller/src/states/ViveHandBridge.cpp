@@ -176,6 +176,8 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
   {
     mc_rtc::log::warning("[{}] leap_abcd_stage_durations must contain four values; using defaults", name());
   }
+  config("leap_builtin_thumb_closure_scale", leapBuiltinThumbClosureScale_);
+  leapBuiltinThumbClosureScale_ = std::clamp(leapBuiltinThumbClosureScale_, 0.0, 1.0);
   config("right_arm_tuning_apply_duration", rightArmTestApplyDuration_);
   std::vector<double> rightArmDefaultPoseDeg = {-30.0, -20.0, 5.0, -120.0, -20.0, 0.0, 20.0};
   config("right_arm_tuning_pose_deg", rightArmDefaultPoseDeg);
@@ -2661,36 +2663,37 @@ void ViveHandBridge::processHardwareTestRequests(mc_control::fsm::Controller & c
       }
       else
       {
-        for(auto & candidate : leapCandidateQ_) { candidate = leapActualQ_; }
-        auto moveGroupTowardLowerLimit = [this](std::vector<double> & pose, size_t group, double fraction)
+        const std::array<double, 4> closureStages = {0.25, 0.50, 0.75, 1.00};
+        auto triggerEquivalentTarget = [this, &gripper](size_t index, double closure)
         {
-          for(size_t local = 0; local < 4; ++local)
-          {
-            const size_t index = 4 * group + local;
-            pose[index] = std::clamp(
-                leapActualQ_[index] + fraction * (leapJointMinimum_[index] - leapActualQ_[index]),
-                leapJointMinimum_[index], leapJointMaximum_[index]);
-          }
+          const double normalized = std::clamp(closure, 0.0, 1.0);
+          const double opening = std::clamp(openValue_ + normalized * (closedValue_ - openValue_), 0.0, 1.0);
+          const double lower = leapJointMinimum_[index];
+          const double upper = leapJointMaximum_[index];
+          return gripper.reversed() ? upper + opening * (lower - upper) : lower + opening * (upper - lower);
         };
 
-        // Conservative, model-limit-normalized starting point for a thumb/Finger-1 C-shape.
-        // A-D progressively move selected groups toward lower limits; no grasp geometry is assumed.
-        // D adds Fingers 2/3 as support. These are test candidates, not a validated grasp.
-        moveGroupTowardLowerLimit(leapCandidateQ_[0], 0, 0.05);
-        moveGroupTowardLowerLimit(leapCandidateQ_[0], 3, 0.05);
-        moveGroupTowardLowerLimit(leapCandidateQ_[1], 0, 0.22);
-        moveGroupTowardLowerLimit(leapCandidateQ_[1], 3, 0.18);
-        moveGroupTowardLowerLimit(leapCandidateQ_[2], 0, 0.45);
-        moveGroupTowardLowerLimit(leapCandidateQ_[2], 3, 0.38);
-        moveGroupTowardLowerLimit(leapCandidateQ_[3], 0, 0.60);
-        moveGroupTowardLowerLimit(leapCandidateQ_[3], 1, 0.32);
-        moveGroupTowardLowerLimit(leapCandidateQ_[3], 2, 0.25);
-        moveGroupTowardLowerLimit(leapCandidateQ_[3], 3, 0.52);
+        // Reproduce the same normalized whole-hand path used by the rear Vive trigger.
+        // The three ordinary fingers use 25/50/75/100% closure. The thumb follows
+        // the same path multiplied by a GUI-adjustable scale so it can be reduced
+        // without disturbing the already useful physical finger motion.
+        for(size_t stage = 0; stage < leapCandidateQ_.size(); ++stage)
+        {
+          leapCandidateQ_[stage].resize(leapJointNames_.size());
+          for(size_t index = 0; index < leapJointNames_.size(); ++index)
+          {
+            const bool thumb = index >= 12;
+            const double closure = closureStages[stage] * (thumb ? leapBuiltinThumbClosureScale_ : 1.0);
+            leapCandidateQ_[stage][index] = triggerEquivalentTarget(index, closure);
+          }
+        }
         leapCandidateValid_.fill(true);
         leapEditorQ_ = leapCandidateQ_[0];
-        leapActiveCandidate_ = "built-in A (light pre-shape)";
-        hardwareTestStatus_ = "loaded conservative built-in A/B/C/D from measured pose; no motion commanded";
-        recordHardwareTestEvent("loaded conservative built-in LEAP A/B/C/D candidates from measured pose");
+        leapActiveCandidate_ = "built-in A (trigger-equivalent 25%)";
+        hardwareTestStatus_ = "loaded trigger-equivalent A/B/C/D; thumb scale="
+                              + std::to_string(static_cast<int>(std::lround(100.0 * leapBuiltinThumbClosureScale_)))
+                              + "%; no motion commanded";
+        recordHardwareTestEvent("loaded trigger-equivalent LEAP A/B/C/D candidates");
       }
     }
   }
@@ -2958,8 +2961,8 @@ void ViveHandBridge::addLeapHandTuningGui(mc_control::fsm::Controller & ctl)
           "Built-in candidate set",
           []() {
             return std::string(
-                "A=light pre-shape; B/C move Finger 1 + thumb progressively; D adds Fingers 2/3. "
-                "Unvalidated and based on motion toward model lower limits");
+                "Copies the physical rear-trigger path: A/B/C/D = 25/50/75/100% closure. "
+                "Thumb closure can be scaled independently before loading");
           }),
       mc_rtc::gui::Label("All candidates ready", [this]() {
         return std::all_of(leapCandidateValid_.begin(), leapCandidateValid_.end(), [](bool ready) { return ready; });
@@ -2979,6 +2982,10 @@ void ViveHandBridge::addLeapHandTuningGui(mc_control::fsm::Controller & ctl)
       mc_rtc::gui::NumberSlider(
           "C -> D [s]", [this]() { return leapSequenceStageDurations_[3]; },
           [this](double value) { leapSequenceStageDurations_[3] = std::clamp(value, 1.0, 15.0); }, 1.0, 15.0),
+      mc_rtc::gui::NumberSlider(
+          "Built-in thumb closure scale [%]", [this]() { return 100.0 * leapBuiltinThumbClosureScale_; },
+          [this](double value) { leapBuiltinThumbClosureScale_ = std::clamp(value / 100.0, 0.0, 1.0); }, 0.0,
+          100.0),
       mc_rtc::gui::Button("LOAD BUILT-IN A/B/C/D FROM ACTUAL (OVERWRITES SLOTS)",
                           [this]() { leapBuiltinCandidatesLoadRequested_ = true; }),
       mc_rtc::gui::Button("START CURRENT -> A -> B -> C -> D",

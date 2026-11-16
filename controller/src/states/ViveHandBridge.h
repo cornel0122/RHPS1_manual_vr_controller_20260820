@@ -420,6 +420,7 @@ private:
   size_t leapSequenceStage_ = 0;
   double leapSequenceStageStartTime_ = -1.0;
   std::array<double, 4> leapSequenceStageDurations_ = {5.0, 4.0, 4.0, 4.0};
+  double leapBuiltinThumbClosureScale_ = 1.0;
   std::vector<double> leapSequenceFromQ_;
   std::vector<double> leapSequenceToQ_;
 

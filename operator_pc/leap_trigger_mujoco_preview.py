@@ -57,8 +57,8 @@ def trigger_to_opening(trigger: float, deadzone: float = 0.05) -> float:
         normalized = (raw - deadzone) / (1.0 - 2.0 * deadzone)
     else:
         normalized = 0.0
-    # These are the current ViveHandBridge openValue_ and closedValue_ defaults.
-    return 0.70 + normalized * (0.05 - 0.70)
+    # Match controller/etc/robots/rhps1.yaml: open_value=1, closed_value=0.
+    return 1.0 - normalized
 
 
 def set_joint(model: mujoco.MjModel, data: mujoco.MjData, name: str, value: float) -> None:
