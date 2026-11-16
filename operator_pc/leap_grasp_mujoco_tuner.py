@@ -184,6 +184,8 @@ class TunerApp:
         self.arm_vars: Dict[str, object] = {}
         self.hand_vars: Dict[str, object] = {}
         self.quick_vars: Dict[str, object] = {}
+        self.quick_summary_vars: Dict[str, object] = {}
+        self.candidate_status_vars: Dict[str, object] = {}
         self.bottle_vars: Dict[str, object] = {}
         self.show_bottle_var = tk.BooleanVar(value=show_bottle)
         self.show_frame_var = tk.BooleanVar(value=True)
@@ -271,6 +273,11 @@ class TunerApp:
         value_text = tk.StringVar(value="0.0°")
         target[name] = variable
 
+        def update_text(*_unused) -> None:
+            value_text.set(f"{float(variable.get()):7.1f}°")
+
+        variable.trace_add("write", update_text)
+
         ttk.Label(parent, text=name, width=22).grid(row=row, column=0, sticky="w", padx=6, pady=2)
         scale = tk.Scale(
             parent,
@@ -280,7 +287,6 @@ class TunerApp:
             resolution=0.1,
             showvalue=False,
             variable=variable,
-            command=lambda raw, label=value_text: label.set(f"{float(raw):7.1f}°"),
             length=510,
         )
         scale.grid(row=row, column=1, sticky="ew", padx=4)
@@ -304,6 +310,11 @@ class TunerApp:
         variable = tk.DoubleVar(value=float(DEFAULT_BOTTLE[key]))
         value_text = tk.StringVar(value=f"{DEFAULT_BOTTLE[key]:.3f}{suffix}")
         self.bottle_vars[key] = variable
+
+        def update_text(*_unused) -> None:
+            value_text.set(f"{float(variable.get()):.3f}{suffix}")
+
+        variable.trace_add("write", update_text)
         ttk.Label(parent, text=label, width=20).grid(row=row, column=0, sticky="w", padx=6, pady=2)
         scale = tk.Scale(
             parent,
@@ -313,7 +324,6 @@ class TunerApp:
             resolution=resolution,
             showvalue=False,
             variable=variable,
-            command=lambda raw, text=value_text, unit=suffix: text.set(f"{float(raw):.3f}{unit}"),
             length=510,
         )
         scale.grid(row=row, column=1, sticky="ew", padx=4)
@@ -402,6 +412,17 @@ class TunerApp:
                 command=lambda name=group: self.set_quick_endpoint(name, "high"),
             ).grid(row=row, column=3, padx=3)
             row += 1
+            summary = tk.StringVar(value="Endpoints: not initialized")
+            self.quick_summary_vars[group] = summary
+            ttk.Label(content, textvariable=summary, wraplength=790).grid(
+                row=row, column=0, columnspan=3, sticky="w", padx=8, pady=(0, 2)
+            )
+            ttk.Button(
+                content,
+                text="Demo: 0° → model midpoint",
+                command=lambda name=group: self.reset_quick_demo(name),
+            ).grid(row=row, column=3, sticky="e", padx=3)
+            row += 1
 
         ttk.Separator(content).grid(row=row, column=0, columnspan=5, sticky="ew", padx=8, pady=14)
         row += 1
@@ -421,7 +442,11 @@ class TunerApp:
             ttk.Button(
                 content, text=f"Load {label}", command=lambda slot=label: self.load_candidate(slot)
             ).grid(row=row, column=2, sticky="w", padx=4)
+            status = tk.StringVar(value="EMPTY — save before loading")
+            self.candidate_status_vars[label] = status
+            ttk.Label(content, textvariable=status).grid(row=row, column=3, sticky="w", padx=8)
             row += 1
+        self._refresh_candidate_status()
         content.columnconfigure(1, weight=1)
 
     def _build_scene_tab(self, parent) -> None:
@@ -542,11 +567,43 @@ class TunerApp:
     def _load_quick_from_store(self) -> None:
         for group in HAND_GROUPS:
             self._quick_entry(group)
+            self._refresh_quick_summary(group)
+
+    def _refresh_quick_summary(self, group: str) -> None:
+        target = self.quick_summary_vars.get(group)
+        if target is None:
+            return
+        entry = self._quick_entry(group)
+        names = HAND_GROUPS[group]
+        low = ", ".join(f"{float(entry['low_deg'].get(name, 0.0)):.1f}" for name in names)
+        high = ", ".join(f"{float(entry['high_deg'].get(name, 0.0)):.1f}" for name in names)
+        target.set(f"0% [{low}]°   →   100% [{high}]°")
+
+    def reset_quick_demo(self, group: str) -> None:
+        """Create visibly different MuJoCo-only endpoints without claiming a grasp pose."""
+        entry = self._quick_entry(group)
+        low = {}
+        high = {}
+        for name in HAND_GROUPS[group]:
+            lower, upper = joint_limits_deg(self.model, name)
+            low[name] = clamp(0.0, lower, upper)
+            high[name] = 0.5 * (lower + upper)
+        entry["low_deg"] = low
+        entry["high_deg"] = high
+        self.quick_vars[group].set(0.0)
+        for name, value in low.items():
+            self.hand_vars[name].set(value)
+        self._refresh_quick_summary(group)
+        self.store.save()
+        self._set_status(
+            f"Initialized {group} demo endpoints. These are model-range examples, not a validated grasp."
+        )
 
     def set_quick_endpoint(self, group: str, endpoint: str) -> None:
         key = "low_deg" if endpoint == "low" else "high_deg"
         entry = self._quick_entry(group)
         entry[key] = {name: round(float(self.hand_vars[name].get()), 3) for name in HAND_GROUPS[group]}
+        self._refresh_quick_summary(group)
         self.store.save()
         self._set_status(f"Saved {group} {endpoint} endpoint locally; no robot connection exists.")
 
@@ -568,6 +625,7 @@ class TunerApp:
         self.store.candidates[label] = pose
         self.store.last_pose = self.current_pose()
         self.store.save()
+        self._refresh_candidate_status()
         self._set_status(f"Saved candidate {label} to {self.store.path}")
 
     def load_candidate(self, label: str) -> None:
@@ -578,6 +636,15 @@ class TunerApp:
         self._apply_pose_dict(pose)
         self.camera_request = "pair"
         self._set_status(f"Loaded candidate {label} into local MuJoCo only.")
+
+    def _refresh_candidate_status(self) -> None:
+        for label, target in self.candidate_status_vars.items():
+            pose = self.store.candidates.get(label)
+            if not isinstance(pose, dict):
+                target.set("EMPTY — save before loading")
+                continue
+            saved_at = pose.get("saved_at", "saved")
+            target.set(str(saved_at))
 
     def save_last_pose(self) -> None:
         self.store.last_pose = self.current_pose()

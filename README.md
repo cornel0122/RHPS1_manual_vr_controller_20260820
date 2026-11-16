@@ -87,7 +87,9 @@ cd ~/luyisi/rhps1_cornel_vive_controller/operator_pc
 参考物；红绿蓝三轴显示模型中的右手坐标系，便于检查姿态偏差。候选姿态默认保存在
 `~/.local/share/rhps1_cornel_vive_controller/leap_grasp_mujoco_presets.json`，不会改动
 controller 配置。瓶子没有碰撞和抓取物理，画面只用于几何与姿态筛选，不能证明真机
-能够稳定抓取。可先运行 `./run_leap_grasp_mujoco_tuner --check` 做无窗口检查。
+能够稳定抓取。Quick 条需要不同的 0%/100% 端点；可从当前手型分别记录，或用明确
+标为 Demo 的模型中点生成器检查界面。A/B/C 空槽必须先保存再载入。可先运行
+`./run_leap_grasp_mujoco_tuner --check` 做无窗口检查。
 
 本目录用于把 RHPS1 的 Vive 手动遥操作控制器从 Operator PC 搬运到实验室 Control PC，
 并提供一套不必重新编译即可切换四种实验条件的真机实验 controller。
