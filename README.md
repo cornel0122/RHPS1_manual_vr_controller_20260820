@@ -59,6 +59,9 @@ RViz 的 `Avatar / Vive / Grasp confirmation` 中提供左右手研究者备用�
 - `ABCD Sequence` 可从实测手型依次平滑执行 A、B、C、D，四段时长分别可调；建议把
   四槽理解为预成形、初步包围、拇指对置、最终支撑，但它只是自定义实验脚手架，并非
   对论文方法的复现。执行中可用 `STOP SEQUENCE / HOLD NOW` 立即停止并保持实测姿态；
+- `LOAD BUILT-IN A/B/C/D FROM ACTUAL` 会从实测姿态生成轻微预成形的 A，令 Finger 1
+  与拇指在 B/C 中逐步向各自模型下限移动，并在 D 加入 Finger 2/3 支撑；它只覆盖四个会话槽位，
+  不会立即驱动硬件。这是一组保守的起始测试值，并非经真机验证的瓶子抓取姿态；
 - 所有滑块都只修改 editor target。`ARM` 只从实测姿态建立安全保持，必须再按
   `APPLY EDITOR SLOWLY` 才会按平滑轨迹驱动真机；`HOLD NOW` 立即以实测姿态为目标，
   `DISARM AND HOLD` 退出调试；
@@ -93,6 +96,7 @@ controller 配置。瓶子没有碰撞和抓取物理，画面只用于几何与
 能够稳定抓取。Quick 条需要不同的 0%/100% 端点；可从当前手型分别记录，或用明确
 标为 Demo 的模型中点生成器检查界面。离线界面可以只对 16 个手关节播放
 `当前姿态 -> A -> B -> C -> D`，支持暂停、继续和停止；手臂及瓶子在播放中保持不变。
+`Create built-in A/B/C/D from current hand` 可在本机生成与 RViz 相同的保守起始候选。
 A/B/C/D 空槽必须先保存再载入。可先运行
 `./run_leap_grasp_mujoco_tuner --check` 做无窗口检查。
 

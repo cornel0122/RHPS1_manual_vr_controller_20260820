@@ -413,6 +413,7 @@ private:
   std::array<bool, 4> leapCandidateValid_ = {false, false, false, false};
   int leapCandidateSaveRequest_ = -1;
   int leapCandidateLoadRequest_ = -1;
+  bool leapBuiltinCandidatesLoadRequested_ = false;
   std::string leapActiveCandidate_ = "none";
   bool leapSequenceStartRequested_ = false;
   bool leapSequenceActive_ = false;

@@ -371,6 +371,7 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
   hardwareTestHoldRequested_ = false;
   hardwareTestCaptureRequested_ = false;
   hardwareTestRestoreRequested_ = false;
+  leapBuiltinCandidatesLoadRequested_ = false;
   hardwareTestApplying_ = false;
   leapSequenceStartRequested_ = false;
   leapSequenceActive_ = false;
@@ -2648,6 +2649,52 @@ void ViveHandBridge::processHardwareTestRequests(mc_control::fsm::Controller & c
     }
   }
 
+  if(leapBuiltinCandidatesLoadRequested_)
+  {
+    leapBuiltinCandidatesLoadRequested_ = false;
+    if(!rejectIfDisarmed("LOAD BUILT-IN ABCD"))
+    {
+      leapActualQ_ = gripper.curPosition();
+      if(leapActualQ_.size() != leapJointNames_.size())
+      {
+        hardwareTestStatus_ = "built-in ABCD rejected: measured LEAP joint vector has the wrong size";
+      }
+      else
+      {
+        for(auto & candidate : leapCandidateQ_) { candidate = leapActualQ_; }
+        auto moveGroupTowardLowerLimit = [this](std::vector<double> & pose, size_t group, double fraction)
+        {
+          for(size_t local = 0; local < 4; ++local)
+          {
+            const size_t index = 4 * group + local;
+            pose[index] = std::clamp(
+                leapActualQ_[index] + fraction * (leapJointMinimum_[index] - leapActualQ_[index]),
+                leapJointMinimum_[index], leapJointMaximum_[index]);
+          }
+        };
+
+        // Conservative, model-limit-normalized starting point for a thumb/Finger-1 C-shape.
+        // A-D progressively move selected groups toward lower limits; no grasp geometry is assumed.
+        // D adds Fingers 2/3 as support. These are test candidates, not a validated grasp.
+        moveGroupTowardLowerLimit(leapCandidateQ_[0], 0, 0.05);
+        moveGroupTowardLowerLimit(leapCandidateQ_[0], 3, 0.05);
+        moveGroupTowardLowerLimit(leapCandidateQ_[1], 0, 0.22);
+        moveGroupTowardLowerLimit(leapCandidateQ_[1], 3, 0.18);
+        moveGroupTowardLowerLimit(leapCandidateQ_[2], 0, 0.45);
+        moveGroupTowardLowerLimit(leapCandidateQ_[2], 3, 0.38);
+        moveGroupTowardLowerLimit(leapCandidateQ_[3], 0, 0.60);
+        moveGroupTowardLowerLimit(leapCandidateQ_[3], 1, 0.32);
+        moveGroupTowardLowerLimit(leapCandidateQ_[3], 2, 0.25);
+        moveGroupTowardLowerLimit(leapCandidateQ_[3], 3, 0.52);
+        leapCandidateValid_.fill(true);
+        leapEditorQ_ = leapCandidateQ_[0];
+        leapActiveCandidate_ = "built-in A (light pre-shape)";
+        hardwareTestStatus_ = "loaded conservative built-in A/B/C/D from measured pose; no motion commanded";
+        recordHardwareTestEvent("loaded conservative built-in LEAP A/B/C/D candidates from measured pose");
+      }
+    }
+  }
+
   if(leapSequenceStartRequested_)
   {
     leapSequenceStartRequested_ = false;
@@ -2780,6 +2827,7 @@ void ViveHandBridge::disarmHardwareTest(const std::string & reason)
   hardwareTestRestoreRequested_ = false;
   leapCandidateSaveRequest_ = -1;
   leapCandidateLoadRequest_ = -1;
+  leapBuiltinCandidatesLoadRequested_ = false;
   leapSequenceStartRequested_ = false;
   hardwareTestArmed_ = false;
   hardwareTestCommandActive_ = false;
@@ -2906,6 +2954,13 @@ void ViveHandBridge::addLeapHandTuningGui(mc_control::fsm::Controller & ctl)
             return std::string(
                 "User-defined staged test: measured pose -> A -> B -> C -> D. It is not a paper reproduction");
           }),
+      mc_rtc::gui::Label(
+          "Built-in candidate set",
+          []() {
+            return std::string(
+                "A=light pre-shape; B/C move Finger 1 + thumb progressively; D adds Fingers 2/3. "
+                "Unvalidated and based on motion toward model lower limits");
+          }),
       mc_rtc::gui::Label("All candidates ready", [this]() {
         return std::all_of(leapCandidateValid_.begin(), leapCandidateValid_.end(), [](bool ready) { return ready; });
       }),
@@ -2924,6 +2979,8 @@ void ViveHandBridge::addLeapHandTuningGui(mc_control::fsm::Controller & ctl)
       mc_rtc::gui::NumberSlider(
           "C -> D [s]", [this]() { return leapSequenceStageDurations_[3]; },
           [this](double value) { leapSequenceStageDurations_[3] = std::clamp(value, 1.0, 15.0); }, 1.0, 15.0),
+      mc_rtc::gui::Button("LOAD BUILT-IN A/B/C/D FROM ACTUAL (OVERWRITES SLOTS)",
+                          [this]() { leapBuiltinCandidatesLoadRequested_ = true; }),
       mc_rtc::gui::Button("START CURRENT -> A -> B -> C -> D",
                           [this]() { leapSequenceStartRequested_ = true; }),
       mc_rtc::gui::Button("STOP SEQUENCE / HOLD NOW", [this]() { hardwareTestHoldRequested_ = true; }));
