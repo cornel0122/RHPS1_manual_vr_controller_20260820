@@ -75,6 +75,20 @@ cd ~/luyisi/rhps1_cornel_vive_controller/operator_pc
 窗口中按 `0`、`5`、`1` 分别查看 trigger 0%、50%、100%；也可在 Vive talker
 运行时添加 `--topic /controller_1`，由真实手柄连续驱动预览。
 
+没有机器人和 VIVE 设备时，可运行完全独立的右臂与右 LEAP Hand 姿态调试器：
+
+```bash
+cd ~/luyisi/rhps1_cornel_vive_controller/operator_pc
+./run_leap_grasp_mujoco_tuner
+```
+
+该工具不加载 ROS、不连接 mc_rtc，也不发布任何 topic。控制面板提供右臂 7 关节、
+右手 16 关节、四组快速插值条、A/B/C 本地候选姿态，以及可调位置和朝向的瓶子视觉
+参考物；红绿蓝三轴显示模型中的右手坐标系，便于检查姿态偏差。候选姿态默认保存在
+`~/.local/share/rhps1_cornel_vive_controller/leap_grasp_mujoco_presets.json`，不会改动
+controller 配置。瓶子没有碰撞和抓取物理，画面只用于几何与姿态筛选，不能证明真机
+能够稳定抓取。可先运行 `./run_leap_grasp_mujoco_tuner --check` 做无窗口检查。
+
 本目录用于把 RHPS1 的 Vive 手动遥操作控制器从 Operator PC 搬运到实验室 Control PC，
 并提供一套不必重新编译即可切换四种实验条件的真机实验 controller。
 
