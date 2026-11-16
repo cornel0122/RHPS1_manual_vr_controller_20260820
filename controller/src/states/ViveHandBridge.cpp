@@ -162,6 +162,20 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
   config("two_hand_pause_hold_duration", twoHandPauseHoldDuration_);
   config("experiment_reset_duration", experimentResetDuration_);
   config("leap_tuning_apply_duration", hardwareTestApplyDuration_);
+  std::vector<double> leapSequenceStageDurations(leapSequenceStageDurations_.begin(),
+                                                 leapSequenceStageDurations_.end());
+  config("leap_abcd_stage_durations", leapSequenceStageDurations);
+  if(leapSequenceStageDurations.size() == leapSequenceStageDurations_.size())
+  {
+    for(size_t i = 0; i < leapSequenceStageDurations_.size(); ++i)
+    {
+      leapSequenceStageDurations_[i] = std::clamp(leapSequenceStageDurations[i], 1.0, 15.0);
+    }
+  }
+  else
+  {
+    mc_rtc::log::warning("[{}] leap_abcd_stage_durations must contain four values; using defaults", name());
+  }
   config("right_arm_tuning_apply_duration", rightArmTestApplyDuration_);
   std::vector<double> rightArmDefaultPoseDeg = {-30.0, -20.0, 5.0, -120.0, -20.0, 0.0, 20.0};
   config("right_arm_tuning_pose_deg", rightArmDefaultPoseDeg);
@@ -358,6 +372,9 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
   hardwareTestCaptureRequested_ = false;
   hardwareTestRestoreRequested_ = false;
   hardwareTestApplying_ = false;
+  leapSequenceStartRequested_ = false;
+  leapSequenceActive_ = false;
+  leapSequenceStage_ = 0;
   hardwareTestArmRequest_.clear();
   hardwareTestSide_ = "none";
   hardwareTestApplyProgress_ = 0.0;
@@ -2542,6 +2559,8 @@ void ViveHandBridge::processHardwareTestRequests(mc_control::fsm::Controller & c
     hardwareTestArmed_ = true;
     hardwareTestCommandActive_ = false;
     hardwareTestApplying_ = false;
+    leapSequenceActive_ = false;
+    leapSequenceStage_ = 0;
     hardwareTestApplyProgress_ = 0.0;
     leapActiveCandidate_ = "custom/current";
     hardwareTestStatus_ = "ARMED; sliders edit only. Use APPLY SLOWLY to move";
@@ -2586,6 +2605,7 @@ void ViveHandBridge::processHardwareTestRequests(mc_control::fsm::Controller & c
       leapEditorQ_ = leapActualQ_;
       leapCommandQ_ = leapActualQ_;
       hardwareTestApplying_ = false;
+      leapSequenceActive_ = false;
       hardwareTestCommandActive_ = true;
       hardwareTestApplyProgress_ = 0.0;
       gripper.setTargetQ(leapCommandQ_);
@@ -2628,6 +2648,41 @@ void ViveHandBridge::processHardwareTestRequests(mc_control::fsm::Controller & c
     }
   }
 
+  if(leapSequenceStartRequested_)
+  {
+    leapSequenceStartRequested_ = false;
+    if(!rejectIfDisarmed("START ABCD"))
+    {
+      bool candidatesReady = true;
+      for(size_t slot = 0; slot < leapCandidateQ_.size(); ++slot)
+      {
+        candidatesReady = candidatesReady && leapCandidateValid_[slot]
+                          && leapCandidateQ_[slot].size() == leapJointNames_.size();
+      }
+      if(!candidatesReady)
+      {
+        hardwareTestStatus_ = "ABCD rejected: save valid candidates A, B, C and D first";
+        recordHardwareTestEvent("rejected ABCD sequence because one or more candidates are empty");
+      }
+      else
+      {
+        leapActualQ_ = gripper.curPosition();
+        leapCommandQ_ = leapActualQ_;
+        leapSequenceFromQ_ = leapActualQ_;
+        leapSequenceToQ_ = leapCandidateQ_[0];
+        leapSequenceStage_ = 0;
+        leapSequenceStageStartTime_ = now();
+        leapSequenceActive_ = true;
+        hardwareTestApplying_ = true;
+        hardwareTestCommandActive_ = true;
+        hardwareTestApplyProgress_ = 0.0;
+        leapActiveCandidate_ = "ABCD sequence";
+        hardwareTestStatus_ = "ABCD running: measured pose -> A";
+        recordHardwareTestEvent("started LEAP sequence measured pose -> A -> B -> C -> D");
+      }
+    }
+  }
+
   if(hardwareTestApplyRequested_)
   {
     hardwareTestApplyRequested_ = false;
@@ -2640,6 +2695,7 @@ void ViveHandBridge::processHardwareTestRequests(mc_control::fsm::Controller & c
       hardwareTestApplyStartTime_ = now();
       hardwareTestApplyProgress_ = 0.0;
       hardwareTestApplying_ = true;
+      leapSequenceActive_ = false;
       hardwareTestCommandActive_ = true;
       hardwareTestStatus_ = "APPLYING editor target slowly";
       recordHardwareTestEvent("started slow LEAP target application");
@@ -2660,7 +2716,43 @@ void ViveHandBridge::updateHardwareTestGripper(mc_control::fsm::Controller & ctl
     return;
   }
 
-  if(hardwareTestApplying_)
+  if(leapSequenceActive_)
+  {
+    const double duration = leapSequenceStageDurations_[leapSequenceStage_];
+    const double ratio = std::clamp((now() - leapSequenceStageStartTime_) / duration, 0.0, 1.0);
+    const double smoothRatio = ratio * ratio * (3.0 - 2.0 * ratio);
+    hardwareTestApplyProgress_ = (static_cast<double>(leapSequenceStage_) + ratio)
+                                 / static_cast<double>(leapSequenceStageDurations_.size());
+    for(size_t i = 0; i < leapCommandQ_.size(); ++i)
+    {
+      leapCommandQ_[i] =
+          (1.0 - smoothRatio) * leapSequenceFromQ_[i] + smoothRatio * leapSequenceToQ_[i];
+    }
+    if(ratio >= 1.0)
+    {
+      leapCommandQ_ = leapSequenceToQ_;
+      if(leapSequenceStage_ + 1 >= leapSequenceStageDurations_.size())
+      {
+        leapSequenceActive_ = false;
+        hardwareTestApplying_ = false;
+        hardwareTestApplyProgress_ = 1.0;
+        leapEditorQ_ = leapCandidateQ_.back();
+        leapActiveCandidate_ = "D";
+        hardwareTestStatus_ = "ABCD complete; HOLDING candidate D";
+        recordHardwareTestEvent("completed LEAP sequence at candidate D");
+      }
+      else
+      {
+        leapSequenceFromQ_ = leapCommandQ_;
+        ++leapSequenceStage_;
+        leapSequenceToQ_ = leapCandidateQ_[leapSequenceStage_];
+        leapSequenceStageStartTime_ = now();
+        hardwareTestStatus_ = "ABCD running: " + leapSequenceStageLabel();
+        recordHardwareTestEvent("advanced LEAP sequence to " + leapSequenceStageLabel());
+      }
+    }
+  }
+  else if(hardwareTestApplying_)
   {
     const double ratio = std::clamp((now() - hardwareTestApplyStartTime_) / hardwareTestApplyDuration_, 0.0, 1.0);
     const double smoothRatio = ratio * ratio * (3.0 - 2.0 * ratio);
@@ -2682,9 +2774,18 @@ void ViveHandBridge::updateHardwareTestGripper(mc_control::fsm::Controller & ctl
 void ViveHandBridge::disarmHardwareTest(const std::string & reason)
 {
   if(hardwareTestArmed_) { mc_rtc::log::warning("[{}] RViz-only LEAP hardware test disarmed: {}", name(), reason); }
+  hardwareTestApplyRequested_ = false;
+  hardwareTestHoldRequested_ = false;
+  hardwareTestCaptureRequested_ = false;
+  hardwareTestRestoreRequested_ = false;
+  leapCandidateSaveRequest_ = -1;
+  leapCandidateLoadRequest_ = -1;
+  leapSequenceStartRequested_ = false;
   hardwareTestArmed_ = false;
   hardwareTestCommandActive_ = false;
   hardwareTestApplying_ = false;
+  leapSequenceActive_ = false;
+  leapSequenceStage_ = 0;
   hardwareTestApplyProgress_ = 0.0;
   hardwareTestSide_ = "none";
   hardwareTestStatus_ = reason;
@@ -2784,14 +2885,48 @@ void ViveHandBridge::addLeapHandTuningGui(mc_control::fsm::Controller & ctl)
   for(size_t slot = 0; slot < leapCandidateQ_.size(); ++slot)
   {
     const std::string label(1, static_cast<char>('A' + slot));
+    const std::array<std::string, 4> roles = {
+        "approach / pre-shape", "initial wrap", "thumb opposition / lock", "final support / power grasp"};
     const std::vector<std::string> category = {"Avatar", "LEAP Grasp Tuning", "Right Hand", "Candidate " + label};
     ctl.gui()->addElement(
-        this, category, mc_rtc::gui::Label("Saved this session", [this, slot]() { return leapCandidateValid_[slot]; }),
+        this, category, mc_rtc::gui::Label("Suggested role (not a validated grasp)", [roles, slot]() { return roles[slot]; }),
+        mc_rtc::gui::Label("Saved this session", [this, slot]() { return leapCandidateValid_[slot]; }),
         mc_rtc::gui::Button("SAVE EDITOR AS " + label,
                             [this, slot]() { leapCandidateSaveRequest_ = static_cast<int>(slot); }),
         mc_rtc::gui::Button("LOAD " + label + " INTO EDITOR",
                             [this, slot]() { leapCandidateLoadRequest_ = static_cast<int>(slot); }));
   }
+
+  const std::vector<std::string> sequence = {"Avatar", "LEAP Grasp Tuning", "Right Hand", "ABCD Sequence"};
+  ctl.gui()->addElement(
+      this, sequence,
+      mc_rtc::gui::Label(
+          "Meaning",
+          []() {
+            return std::string(
+                "User-defined staged test: measured pose -> A -> B -> C -> D. It is not a paper reproduction");
+          }),
+      mc_rtc::gui::Label("All candidates ready", [this]() {
+        return std::all_of(leapCandidateValid_.begin(), leapCandidateValid_.end(), [](bool ready) { return ready; });
+      }),
+      mc_rtc::gui::Label("Sequence active", [this]() { return leapSequenceActive_; }),
+      mc_rtc::gui::Label("Current transition", [this]() { return leapSequenceStageLabel(); }),
+      mc_rtc::gui::Label("Overall progress", [this]() { return hardwareTestApplyProgress_; }),
+      mc_rtc::gui::NumberSlider(
+          "Measured -> A [s]", [this]() { return leapSequenceStageDurations_[0]; },
+          [this](double value) { leapSequenceStageDurations_[0] = std::clamp(value, 1.0, 15.0); }, 1.0, 15.0),
+      mc_rtc::gui::NumberSlider(
+          "A -> B [s]", [this]() { return leapSequenceStageDurations_[1]; },
+          [this](double value) { leapSequenceStageDurations_[1] = std::clamp(value, 1.0, 15.0); }, 1.0, 15.0),
+      mc_rtc::gui::NumberSlider(
+          "B -> C [s]", [this]() { return leapSequenceStageDurations_[2]; },
+          [this](double value) { leapSequenceStageDurations_[2] = std::clamp(value, 1.0, 15.0); }, 1.0, 15.0),
+      mc_rtc::gui::NumberSlider(
+          "C -> D [s]", [this]() { return leapSequenceStageDurations_[3]; },
+          [this](double value) { leapSequenceStageDurations_[3] = std::clamp(value, 1.0, 15.0); }, 1.0, 15.0),
+      mc_rtc::gui::Button("START CURRENT -> A -> B -> C -> D",
+                          [this]() { leapSequenceStartRequested_ = true; }),
+      mc_rtc::gui::Button("STOP SEQUENCE / HOLD NOW", [this]() { hardwareTestHoldRequested_ = true; }));
 
   const std::array<std::string, 4> groupNames = {"Finger 1", "Finger 2", "Finger 3", "Thumb"};
   for(size_t group = 0; group < groupNames.size(); ++group)
@@ -2846,6 +2981,15 @@ void ViveHandBridge::addLeapHandTuningLogs(mc_control::fsm::Controller & ctl)
                            [this]() -> const std::string & { return hardwareTestLastEvent_; });
   ctl.logger().addLogEntry(prefix + "editor-source", this,
                            [this]() -> const std::string & { return leapActiveCandidate_; });
+  ctl.logger().addLogEntry(prefix + "abcd-active", this, [this]() { return leapSequenceActive_; });
+  ctl.logger().addLogEntry(prefix + "abcd-stage", this,
+                           [this]() { return static_cast<unsigned int>(leapSequenceStage_); });
+  ctl.logger().addLogEntry(prefix + "abcd-transition", this, [this]() { return leapSequenceStageLabel(); });
+  for(size_t stage = 0; stage < leapSequenceStageDurations_.size(); ++stage)
+  {
+    ctl.logger().addLogEntry(prefix + "abcd-duration-" + std::to_string(stage) + "-s", this,
+                             [this, stage]() { return leapSequenceStageDurations_[stage]; });
+  }
   for(size_t group = 0; group < leapQuickPercent_.size(); ++group)
   {
     ctl.logger().addLogEntry(prefix + "quick-percent-" + std::to_string(group + 1), this,
@@ -2905,6 +3049,14 @@ std::string ViveHandBridge::leapGroupPoseSummary(size_t group, bool high) const
     out << mc_rtc::constants::toDeg(pose[4 * group + local]);
   }
   return out.str();
+}
+
+std::string ViveHandBridge::leapSequenceStageLabel() const
+{
+  if(!leapSequenceActive_) { return "idle"; }
+  static const std::array<std::string, 4> transitions = {"measured pose -> A", "A -> B", "B -> C", "C -> D"};
+  if(leapSequenceStage_ >= transitions.size()) { return "invalid"; }
+  return transitions[leapSequenceStage_];
 }
 
 void ViveHandBridge::recordHardwareTestEvent(const std::string & event)

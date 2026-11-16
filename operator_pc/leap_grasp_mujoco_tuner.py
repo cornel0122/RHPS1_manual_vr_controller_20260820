@@ -189,6 +189,19 @@ class TunerApp:
         self.bottle_vars: Dict[str, object] = {}
         self.show_bottle_var = tk.BooleanVar(value=show_bottle)
         self.show_frame_var = tk.BooleanVar(value=True)
+        self.sequence_active = False
+        self.sequence_paused = False
+        self.sequence_updating = False
+        self.sequence_stage = 0
+        self.sequence_stage_started = 0.0
+        self.sequence_pause_started = 0.0
+        self.sequence_from: Dict[str, float] = {}
+        self.sequence_targets: List[Dict[str, float]] = []
+        self.sequence_duration_vars = [
+            tk.DoubleVar(value=value) for value in (2.5, 2.0, 2.0, 2.0)
+        ]
+        self.sequence_status_var = tk.StringVar(value="Idle")
+        self.sequence_progress_var = tk.StringVar(value="0.0%")
 
         self._build_header()
         notebook = ttk.Notebook(self.root)
@@ -200,7 +213,7 @@ class TunerApp:
         scene_tab = ttk.Frame(notebook)
         notebook.add(arm_tab, text="Right arm (7)")
         notebook.add(hand_tab, text="Right LEAP Hand (16)")
-        notebook.add(quick_tab, text="Quick / A-B-C")
+        notebook.add(quick_tab, text="Quick / A-B-C-D")
         notebook.add(scene_tab, text="Bottle / output")
 
         self._build_arm_tab(arm_tab)
@@ -277,6 +290,13 @@ class TunerApp:
             value_text.set(f"{float(variable.get()):7.1f}°")
 
         variable.trace_add("write", update_text)
+
+        if target is self.hand_vars:
+            def stop_sequence_on_manual_edit(*_unused) -> None:
+                if self.sequence_active and not self.sequence_updating:
+                    self.stop_sequence("Stopped: a hand joint was edited manually.")
+
+            variable.trace_add("write", stop_sequence_on_manual_edit)
 
         ttk.Label(parent, text=name, width=22).grid(row=row, column=0, sticky="w", padx=6, pady=2)
         scale = tk.Scale(
@@ -382,7 +402,7 @@ class TunerApp:
             content,
             text=(
                 "Each quick slider interpolates only its four joints between endpoints captured from the "
-                "current hand pose. Endpoints and A/B/C are stored locally in JSON."
+                "current hand pose. Endpoints and A/B/C/D are stored locally in JSON."
             ),
             wraplength=840,
         ).grid(row=row, column=0, columnspan=5, sticky="w", padx=8, pady=8)
@@ -432,7 +452,13 @@ class TunerApp:
             font=("TkDefaultFont", 11, "bold"),
         ).grid(row=row, column=0, columnspan=5, sticky="w", padx=8, pady=4)
         row += 1
-        for label in ("A", "B", "C"):
+        roles = {
+            "A": "approach / pre-shape",
+            "B": "initial wrap",
+            "C": "thumb opposition / lock",
+            "D": "final support / power grasp",
+        }
+        for label in ("A", "B", "C", "D"):
             ttk.Label(content, text=f"Candidate {label}", width=18).grid(
                 row=row, column=0, sticky="w", padx=8, pady=4
             )
@@ -444,9 +470,62 @@ class TunerApp:
             ).grid(row=row, column=2, sticky="w", padx=4)
             status = tk.StringVar(value="EMPTY — save before loading")
             self.candidate_status_vars[label] = status
-            ttk.Label(content, textvariable=status).grid(row=row, column=3, sticky="w", padx=8)
+            ttk.Label(content, text=f"{roles[label]} —", width=28).grid(
+                row=row, column=3, sticky="w", padx=(8, 0)
+            )
+            ttk.Label(content, textvariable=status).grid(row=row, column=4, sticky="w", padx=(0, 8))
             row += 1
         self._refresh_candidate_status()
+
+        ttk.Separator(content).grid(row=row, column=0, columnspan=5, sticky="ew", padx=8, pady=14)
+        row += 1
+        ttk.Label(
+            content,
+            text="A-B-C-D staged hand preview (our test scaffold, not a paper reproduction)",
+            font=("TkDefaultFont", 11, "bold"),
+        ).grid(row=row, column=0, columnspan=5, sticky="w", padx=8, pady=4)
+        row += 1
+        ttk.Label(
+            content,
+            text=(
+                "Playback interpolates only the 16 hand joints from the current pose through A/B/C/D. "
+                "The arm and bottle stay where they are; this remains local MuJoCo visualization only."
+            ),
+            wraplength=840,
+        ).grid(row=row, column=0, columnspan=5, sticky="w", padx=8, pady=4)
+        row += 1
+        transitions = ("Current -> A", "A -> B", "B -> C", "C -> D")
+        for stage, label in enumerate(transitions):
+            ttk.Label(content, text=f"{label} duration [s]").grid(
+                row=row, column=0, sticky="w", padx=8, pady=2
+            )
+            tk.Scale(
+                content,
+                from_=0.2,
+                to=10.0,
+                orient="horizontal",
+                resolution=0.1,
+                variable=self.sequence_duration_vars[stage],
+                length=300,
+            ).grid(row=row, column=1, columnspan=2, sticky="ew", padx=4)
+            row += 1
+        sequence_controls = ttk.Frame(content)
+        sequence_controls.grid(row=row, column=0, columnspan=5, sticky="w", padx=8, pady=8)
+        ttk.Button(sequence_controls, text="Play current -> A -> B -> C -> D", command=self.start_sequence).pack(
+            side="left"
+        )
+        ttk.Button(sequence_controls, text="Pause / resume", command=self.toggle_sequence_pause).pack(
+            side="left", padx=4
+        )
+        ttk.Button(sequence_controls, text="Stop / hold local pose", command=self.stop_sequence).pack(
+            side="left"
+        )
+        row += 1
+        ttk.Label(content, text="Sequence status:").grid(row=row, column=0, sticky="w", padx=8)
+        ttk.Label(content, textvariable=self.sequence_status_var, wraplength=620).grid(
+            row=row, column=1, columnspan=3, sticky="w", padx=4
+        )
+        ttk.Label(content, textvariable=self.sequence_progress_var).grid(row=row, column=4, sticky="e", padx=8)
         content.columnconfigure(1, weight=1)
 
     def _build_scene_tab(self, parent) -> None:
@@ -608,6 +687,8 @@ class TunerApp:
         self._set_status(f"Saved {group} {endpoint} endpoint locally; no robot connection exists.")
 
     def apply_quick(self, group: str, percent: float) -> None:
+        if self.sequence_active:
+            self.stop_sequence("Stopped: a quick hand control was edited.")
         entry = self._quick_entry(group)
         ratio = clamp(percent, 0.0, 100.0) / 100.0
         for name in HAND_GROUPS[group]:
@@ -620,6 +701,8 @@ class TunerApp:
             )
 
     def save_candidate(self, label: str) -> None:
+        if self.sequence_active:
+            self.stop_sequence(f"Stopped sequence to save candidate {label}.")
         pose = self.current_pose()
         pose["saved_at"] = datetime.now().astimezone().isoformat(timespec="seconds")
         self.store.candidates[label] = pose
@@ -633,6 +716,8 @@ class TunerApp:
         if not isinstance(pose, dict):
             self._set_status(f"Candidate {label} is empty.")
             return
+        if self.sequence_active:
+            self.stop_sequence(f"Stopped sequence to load candidate {label}.")
         self._apply_pose_dict(pose)
         self.camera_request = "pair"
         self._set_status(f"Loaded candidate {label} into local MuJoCo only.")
@@ -645,6 +730,95 @@ class TunerApp:
                 continue
             saved_at = pose.get("saved_at", "saved")
             target.set(str(saved_at))
+
+    def _sequence_candidate_hand(self, label: str) -> Dict[str, float] | None:
+        pose = self.store.candidates.get(label)
+        if not isinstance(pose, dict):
+            return None
+        hand = pose.get("hand_deg")
+        if not isinstance(hand, dict) or any(name not in hand for name in HAND_JOINTS):
+            return None
+        result: Dict[str, float] = {}
+        try:
+            for name in HAND_JOINTS:
+                lower, upper = joint_limits_deg(self.model, name)
+                result[name] = clamp(float(hand[name]), lower, upper)
+        except (TypeError, ValueError):
+            return None
+        return result
+
+    def start_sequence(self) -> None:
+        targets: List[Dict[str, float]] = []
+        for label in ("A", "B", "C", "D"):
+            target = self._sequence_candidate_hand(label)
+            if target is None:
+                self.sequence_status_var.set(f"Cannot start: candidate {label} is empty or incomplete.")
+                self.sequence_progress_var.set("0.0%")
+                self._set_status("A-B-C-D preview rejected; save all four complete candidates first.")
+                return
+            targets.append(target)
+        self.sequence_targets = targets
+        self.sequence_from = {name: float(self.hand_vars[name].get()) for name in HAND_JOINTS}
+        self.sequence_stage = 0
+        self.sequence_stage_started = time.monotonic()
+        self.sequence_paused = False
+        self.sequence_active = True
+        self.sequence_status_var.set("Running: current hand pose -> A")
+        self.sequence_progress_var.set("0.0%")
+        self._set_status("Playing local 16-joint hand sequence current -> A -> B -> C -> D.")
+
+    def toggle_sequence_pause(self) -> None:
+        if not self.sequence_active:
+            self.sequence_status_var.set("Idle — press Play after saving A, B, C and D.")
+            return
+        if self.sequence_paused:
+            self.sequence_stage_started += time.monotonic() - self.sequence_pause_started
+            self.sequence_paused = False
+            self.sequence_status_var.set(f"Running: {self._sequence_transition_label()}")
+            self._set_status("Resumed local A-B-C-D preview.")
+        else:
+            self.sequence_pause_started = time.monotonic()
+            self.sequence_paused = True
+            self.sequence_status_var.set(f"Paused during {self._sequence_transition_label()}")
+            self._set_status("Paused local A-B-C-D preview at the current hand pose.")
+
+    def stop_sequence(self, reason: str = "Stopped; holding the current local hand pose.") -> None:
+        self.sequence_active = False
+        self.sequence_paused = False
+        self.sequence_status_var.set(reason)
+        self._set_status(reason)
+
+    def _sequence_transition_label(self) -> str:
+        return ("current pose -> A", "A -> B", "B -> C", "C -> D")[self.sequence_stage]
+
+    def update_sequence(self) -> None:
+        if not self.sequence_active or self.sequence_paused:
+            return
+        duration = max(0.2, float(self.sequence_duration_vars[self.sequence_stage].get()))
+        ratio = clamp((time.monotonic() - self.sequence_stage_started) / duration, 0.0, 1.0)
+        smooth = ratio * ratio * (3.0 - 2.0 * ratio)
+        target = self.sequence_targets[self.sequence_stage]
+        self.sequence_updating = True
+        try:
+            for name in HAND_JOINTS:
+                value = (1.0 - smooth) * self.sequence_from[name] + smooth * target[name]
+                self.hand_vars[name].set(value)
+        finally:
+            self.sequence_updating = False
+        overall = 100.0 * (self.sequence_stage + ratio) / 4.0
+        self.sequence_progress_var.set(f"{overall:.1f}%")
+        if ratio < 1.0:
+            return
+        if self.sequence_stage == 3:
+            self.sequence_active = False
+            self.sequence_progress_var.set("100.0%")
+            self.sequence_status_var.set("Complete; holding candidate D in local MuJoCo.")
+            self._set_status("Completed local A-B-C-D hand preview; no command was sent anywhere.")
+            return
+        self.sequence_from = dict(target)
+        self.sequence_stage += 1
+        self.sequence_stage_started = time.monotonic()
+        self.sequence_status_var.set(f"Running: {self._sequence_transition_label()}")
 
     def save_last_pose(self) -> None:
         self.store.last_pose = self.current_pose()
@@ -677,6 +851,7 @@ class TunerApp:
         try:
             self.root.update_idletasks()
             self.root.update()
+            self.update_sequence()
         except self.tk.TclError:
             self.closed = True
         return not self.closed
@@ -817,7 +992,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--model", type=Path, default=DEFAULT_MODEL, help="RHPS1 LEAP MuJoCo XML")
     parser.add_argument(
-        "--presets", type=Path, default=DEFAULT_PRESETS, help="local JSON file for A/B/C and endpoints"
+        "--presets", type=Path, default=DEFAULT_PRESETS, help="local JSON file for A/B/C/D and endpoints"
     )
     parser.add_argument("--no-bottle", action="store_true", help="start with the visual bottle hidden")
     parser.add_argument(

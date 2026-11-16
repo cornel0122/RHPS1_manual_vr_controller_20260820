@@ -187,6 +187,7 @@ private:
   void setLeapQuickEndpoint(size_t group, bool high);
   void applyLeapQuickInterpolation(size_t group, double percent);
   std::string leapGroupPoseSummary(size_t group, bool high) const;
+  std::string leapSequenceStageLabel() const;
   void recordHardwareTestEvent(const std::string & event);
   void processRightArmTestRequests(mc_control::fsm::Controller & ctl);
   void updateRightArmTest(mc_control::fsm::Controller & ctl);
@@ -408,11 +409,18 @@ private:
   std::array<std::vector<double>, 4> leapQuickLowQ_;
   std::array<std::vector<double>, 4> leapQuickHighQ_;
   std::array<double, 4> leapQuickPercent_ = {0.0, 0.0, 0.0, 0.0};
-  std::array<std::vector<double>, 3> leapCandidateQ_;
-  std::array<bool, 3> leapCandidateValid_ = {false, false, false};
+  std::array<std::vector<double>, 4> leapCandidateQ_;
+  std::array<bool, 4> leapCandidateValid_ = {false, false, false, false};
   int leapCandidateSaveRequest_ = -1;
   int leapCandidateLoadRequest_ = -1;
   std::string leapActiveCandidate_ = "none";
+  bool leapSequenceStartRequested_ = false;
+  bool leapSequenceActive_ = false;
+  size_t leapSequenceStage_ = 0;
+  double leapSequenceStageStartTime_ = -1.0;
+  std::array<double, 4> leapSequenceStageDurations_ = {5.0, 4.0, 4.0, 4.0};
+  std::vector<double> leapSequenceFromQ_;
+  std::vector<double> leapSequenceToQ_;
 
   bool rightArmTestAvailable_ = false;
   bool rightArmTestArmed_ = false;

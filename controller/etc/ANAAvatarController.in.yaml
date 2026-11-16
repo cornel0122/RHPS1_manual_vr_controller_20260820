@@ -1158,6 +1158,9 @@ states:
     # RViz-only LEAP grasp editor. Sliders never command hardware directly;
     # APPLY SLOWLY interpolates from the measured pose over these durations.
     leap_tuning_apply_duration: 5.0
+    # User-defined staged hand test: measured pose -> A -> B -> C -> D.
+    # These four values are seconds per transition and remain editable in RViz.
+    leap_abcd_stage_durations: [5.0, 4.0, 4.0, 4.0]
     right_arm_tuning_apply_duration: 8.0
     # Seven RHPS1 right-arm joints, in the order documented by the RViz panel.
     # Loading this pose only changes the editor; a separate APPLY is required.
