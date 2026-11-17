@@ -300,6 +300,8 @@ private:
   int directHandRotationAxisMode_ = 0;
   Eigen::Matrix3d leftHandOrientationCorrection_ = Eigen::Matrix3d::Identity();
   Eigen::Matrix3d rightHandOrientationCorrection_ = Eigen::Matrix3d::Identity();
+  Eigen::Vector3d leftHandOrientationOffsetRpyDeg_ = Eigen::Vector3d::Zero();
+  Eigen::Vector3d rightHandOrientationOffsetRpyDeg_ = Eigen::Vector3d::Zero();
   double maxStep_ = 0.35;
   double directWaistMaxDistance_ = 1.2;
   double inputDelay_ = 0.0;
@@ -356,6 +358,7 @@ private:
   bool gripperSafetyEnabled_ = false;
   bool controlMujocoAdhesion_ = true;
   bool controlHandOrientation_ = true;
+  bool handOrientationCalibrationGui_ = false;
   bool useVelocityFeedforward_ = true;
   bool useLinearVelocityFeedforward_ = true;
   bool useAngularVelocityFeedforward_ = false;

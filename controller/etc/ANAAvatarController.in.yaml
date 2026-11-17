@@ -1141,6 +1141,11 @@ states:
     gripper_expected_active_joints: @AVATAR_GRIPPER_EXPECTED_ACTIVE_JOINTS@
     gripper_control_mode: "@AVATAR_GRIPPER_CONTROL_MODE@"
     grasp_notification_input: "@AVATAR_GRASP_NOTIFICATION_INPUT@"
+    # End-effector frame correction selected by the controller variant.
+    # Sake2 variants remain 0/0/0; LEAP uses left yaw -90 and right yaw +90 degrees.
+    left_hand_orientation_offset_rpy_deg: [@AVATAR_LEFT_HAND_ORIENTATION_OFFSET_RPY_DEG@]
+    right_hand_orientation_offset_rpy_deg: [@AVATAR_RIGHT_HAND_ORIENTATION_OFFSET_RPY_DEG@]
+    hand_orientation_calibration_gui: @AVATAR_HAND_ORIENTATION_CALIBRATION_GUI@
     # Current Sake2 and LEAP variants map the rear trigger continuously from open (0) to closed (1).
     analog_trigger_deadzone: 0.05
     analog_trigger_filter_alpha: 0.2

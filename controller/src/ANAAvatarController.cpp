@@ -59,6 +59,24 @@ void ANAAvatarController<WalkingCtl>::create_collision_cstr(const mc_rtc::Config
 
   std::vector<std::string> robot_all_bodies = robot_bodies;
 
+  auto resolve_convex = [this](const std::string & name) -> std::string {
+    if(this->robot().hasConvex(name)) { return name; }
+
+    // LEAP RobotModules keep L/R_HAND_LINK as fixed anchors but do not attach
+    // collision convexes to them. Reuse the corresponding wrist convex for
+    // the legacy RHPS1 hand collision entries. Sake2 keeps using its actual
+    // hand convexes because the early hasConvex check succeeds there.
+    if(name == "L_HAND_LINK" && this->robot().hasConvex("L_WRIST_Y_LINK"))
+    {
+      return "L_WRIST_Y_LINK";
+    }
+    if(name == "R_HAND_LINK" && this->robot().hasConvex("R_WRIST_Y_LINK"))
+    {
+      return "R_WRIST_Y_LINK";
+    }
+    return {};
+  };
+
   while(true)
   {
     if(!config.has("cstr_set_" + std::to_string(cstr_set_indx))) { break; }
@@ -87,19 +105,21 @@ void ANAAvatarController<WalkingCtl>::create_collision_cstr(const mc_rtc::Config
       {
         for(auto bd2 = std::begin(bodies_2); bd2 != std::end(bodies_2); bd2++)
         {
-          if(*bd1 != *bd2)
+          const auto convex1 = resolve_convex(*bd1);
+          const auto convex2 = resolve_convex(*bd2);
+          if(convex1.empty())
           {
-            if(!this->robot().hasBody(*bd1))
-            {
-              mc_rtc::log::error("Discarding collision with {} because it does not exist in {}", *bd1,
-                                 this->robot().name());
-            }
-            else if(!this->robot().hasBody(*bd2))
-            {
-              mc_rtc::log::error("Discarding collision with {} because it does not exist in {}", *bd2,
-                                 this->robot().name());
-            }
-            else { collisions.push_back(mc_rbdyn::Collision(*bd1, *bd2, iDist, sDist, 0., joints, {})); }
+            mc_rtc::log::error("Discarding collision with {} because it has no convex in {}", *bd1,
+                               this->robot().name());
+          }
+          else if(convex2.empty())
+          {
+            mc_rtc::log::error("Discarding collision with {} because it has no convex in {}", *bd2,
+                               this->robot().name());
+          }
+          else if(convex1 != convex2)
+          {
+            collisions.push_back(mc_rbdyn::Collision(convex1, convex2, iDist, sDist, 0., joints, {}));
           }
         }
         robot_bodies.erase(std::remove(robot_bodies.begin(), robot_bodies.end(), *bd1), robot_bodies.end());

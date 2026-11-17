@@ -114,12 +114,15 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
   config("debug_hand_mapping_interval", debugHandMappingInterval_);
   if(config.has("left_hand_orientation_offset_rpy_deg"))
   {
-    leftHandOrientationCorrection_ = rpyDegreesToMatrix(config("left_hand_orientation_offset_rpy_deg"));
+    leftHandOrientationOffsetRpyDeg_ = config("left_hand_orientation_offset_rpy_deg");
+    leftHandOrientationCorrection_ = rpyDegreesToMatrix(leftHandOrientationOffsetRpyDeg_);
   }
   if(config.has("right_hand_orientation_offset_rpy_deg"))
   {
-    rightHandOrientationCorrection_ = rpyDegreesToMatrix(config("right_hand_orientation_offset_rpy_deg"));
+    rightHandOrientationOffsetRpyDeg_ = config("right_hand_orientation_offset_rpy_deg");
+    rightHandOrientationCorrection_ = rpyDegreesToMatrix(rightHandOrientationOffsetRpyDeg_);
   }
+  config("hand_orientation_calibration_gui", handOrientationCalibrationGui_);
   config("max_step", maxStep_);
   config("direct_waist_max_distance", directWaistMaxDistance_);
   config("input_delay", inputDelay_);
@@ -650,6 +653,73 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
           "Max hand step [m]", [this]() { return maxStep_; }, [this](double s) { maxStep_ = std::max(0.05, s); }),
       mc_rtc::gui::NumberInput(
           "Input delay [s]", [this]() { return inputDelay_; }, [this](double d) { inputDelay_ = std::max(0.0, d); }));
+
+  // This panel is disabled in every production configuration. A MuJoCo-only
+  // overlay can enable it to identify a fixed hand-frame offset without
+  // rebuilding or touching the physical robot configuration.
+  if(handOrientationCalibrationGui_)
+  {
+    ctl.gui()->addElement(
+        this, {"Avatar", "Vive", "MuJoCo Hand Orientation Calibration"},
+        mc_rtc::gui::Label(
+            "Scope", []() { return std::string("Live target-frame correction; intended for local MuJoCo only"); }),
+        mc_rtc::gui::NumberSlider(
+            "Left roll offset [deg]", [this]() { return leftHandOrientationOffsetRpyDeg_.x(); },
+            [this](double value) {
+              leftHandOrientationOffsetRpyDeg_.x() = value;
+              leftHandOrientationCorrection_ = rpyDegreesToMatrix(leftHandOrientationOffsetRpyDeg_);
+            }, -180.0, 180.0),
+        mc_rtc::gui::NumberSlider(
+            "Left pitch offset [deg]", [this]() { return leftHandOrientationOffsetRpyDeg_.y(); },
+            [this](double value) {
+              leftHandOrientationOffsetRpyDeg_.y() = value;
+              leftHandOrientationCorrection_ = rpyDegreesToMatrix(leftHandOrientationOffsetRpyDeg_);
+            }, -180.0, 180.0),
+        mc_rtc::gui::NumberSlider(
+            "Left yaw offset [deg]", [this]() { return leftHandOrientationOffsetRpyDeg_.z(); },
+            [this](double value) {
+              leftHandOrientationOffsetRpyDeg_.z() = value;
+              leftHandOrientationCorrection_ = rpyDegreesToMatrix(leftHandOrientationOffsetRpyDeg_);
+            }, -180.0, 180.0),
+        mc_rtc::gui::NumberSlider(
+            "Right roll offset [deg]", [this]() { return rightHandOrientationOffsetRpyDeg_.x(); },
+            [this](double value) {
+              rightHandOrientationOffsetRpyDeg_.x() = value;
+              rightHandOrientationCorrection_ = rpyDegreesToMatrix(rightHandOrientationOffsetRpyDeg_);
+            }, -180.0, 180.0),
+        mc_rtc::gui::NumberSlider(
+            "Right pitch offset [deg]", [this]() { return rightHandOrientationOffsetRpyDeg_.y(); },
+            [this](double value) {
+              rightHandOrientationOffsetRpyDeg_.y() = value;
+              rightHandOrientationCorrection_ = rpyDegreesToMatrix(rightHandOrientationOffsetRpyDeg_);
+            }, -180.0, 180.0),
+        mc_rtc::gui::NumberSlider(
+            "Right yaw offset [deg]", [this]() { return rightHandOrientationOffsetRpyDeg_.z(); },
+            [this](double value) {
+              rightHandOrientationOffsetRpyDeg_.z() = value;
+              rightHandOrientationCorrection_ = rpyDegreesToMatrix(rightHandOrientationOffsetRpyDeg_);
+            }, -180.0, 180.0),
+        mc_rtc::gui::Label("Candidate YAML", [this]() {
+          std::ostringstream out;
+          out << std::fixed << std::setprecision(1) << "left_hand_orientation_offset_rpy_deg: ["
+              << leftHandOrientationOffsetRpyDeg_.x() << ", " << leftHandOrientationOffsetRpyDeg_.y() << ", "
+              << leftHandOrientationOffsetRpyDeg_.z() << "]\nright_hand_orientation_offset_rpy_deg: ["
+              << rightHandOrientationOffsetRpyDeg_.x() << ", " << rightHandOrientationOffsetRpyDeg_.y() << ", "
+              << rightHandOrientationOffsetRpyDeg_.z() << "]";
+          return out.str();
+        }),
+        mc_rtc::gui::Button("Reset left offset to 0 / 0 / 0", [this]() {
+          leftHandOrientationOffsetRpyDeg_.setZero();
+          leftHandOrientationCorrection_.setIdentity();
+        }),
+        mc_rtc::gui::Button("Reset right offset to 0 / 0 / 0", [this]() {
+          rightHandOrientationOffsetRpyDeg_.setZero();
+          rightHandOrientationCorrection_.setIdentity();
+        }));
+    mc_rtc::log::warning(
+        "[{}] MuJoCo hand-orientation calibration GUI enabled; do not use this runtime configuration on hardware",
+        name());
+  }
 
   ctl.gui()->addElement(
       this, {"Avatar", "Vive", "Grasp confirmation"},
@@ -2060,7 +2130,14 @@ void ViveHandBridge::updateHand(mc_control::fsm::Controller & ctl, HandState & h
         const Eigen::Matrix3d & correction =
             isLeftHand ? leftHandNeutralCorrection_ : rightHandNeutralCorrection_;
         const Eigen::Matrix3d bodyDevice = neutralBodyFromWaist_ * relativeHandRotation(hand);
-        const Eigen::Matrix3d bodyHand = bodyDevice * correction;
+        // The neutral correction maps the physical controller mounting to an
+        // anatomical hand frame. The additional R/P/Y correction is normally
+        // identity; a MuJoCo-only GUI may tune it to identify a fixed robot
+        // hand/end-effector frame mismatch (for example an apparent 90 deg
+        // LEAP Hand offset).
+        const Eigen::Matrix3d & orientationCorrection =
+            isLeftHand ? leftHandOrientationCorrection_ : rightHandOrientationCorrection_;
+        const Eigen::Matrix3d bodyHand = bodyDevice * correction * orientationCorrection;
         // OpenVR 的 pose_matrix 表示设备坐标轴在参考坐标中的主动旋转，
         // sva::PTransformd::rotation() 使用相反的坐标变换约定，因此写入任务目标前需要转置。
         // 自然下垂时 bodyHand=I，不受影响；运动后的旋转方向由此与人体保持一致。

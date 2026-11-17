@@ -57,6 +57,18 @@ set(AVATAR_GRIPPER_PROFILE "sake2")
 set(AVATAR_GRIPPER_EXPECTED_ACTIVE_JOINTS 1)
 set(AVATAR_GRIPPER_CONTROL_MODE "analog_trigger")
 set(AVATAR_GRASP_NOTIFICATION_INPUT "grip")
+set(AVATAR_LEFT_HAND_ORIENTATION_OFFSET_RPY_DEG "0.0, 0.0, 0.0")
+set(AVATAR_RIGHT_HAND_ORIENTATION_OFFSET_RPY_DEG "0.0, 0.0, 0.0")
+set(AVATAR_HAND_ORIENTATION_CALIBRATION_GUI "false")
+
+# The local calibration launcher deliberately uses the plugin-free manual
+# controller even though its RobotModule contains LEAP Hands. This option lets
+# that isolated MuJoCo build exercise the LEAP-only hand-frame correction while
+# the normal Sake2 manual controller remains unchanged.
+option(
+  MUJOCO_LEAP_HAND_ORIENTATION_CALIBRATION
+  "Apply the LEAP hand-frame correction to the manual variant for local MuJoCo calibration"
+  OFF)
 
 set(AVATAR_INITIAL_STATE "LIPMWalking::Initial")
 set(AVATAR_INITIAL_STATE_OUTPUT "Standing")
@@ -90,10 +102,20 @@ set(AVATAR_EXTRA_CONFIG "")
 # mocap 插件仅提供旧 retargetting state 需要的兼容 datastore；实际输入来自 Vive bridge。
 # EmergencyButtonPlugin 在该源码包中不是必需依赖；真机急停仍由 RHPS1 硬件安全链负责。
 set(AVATAR_PLUGINS "[mocap_plugin]")
+if(MUJOCO_LEAP_HAND_ORIENTATION_CALIBRATION)
+  set(AVATAR_LEFT_HAND_ORIENTATION_OFFSET_RPY_DEG "0.0, 0.0, -90.0")
+  set(AVATAR_RIGHT_HAND_ORIENTATION_OFFSET_RPY_DEG "0.0, 0.0, 90.0")
+  set(AVATAR_HAND_ORIENTATION_CALIBRATION_GUI "true")
+endif()
 configure_file(etc/ANAAvatarController.in.yaml
                "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_manual.yaml")
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/etc/${PROJECT_NAME}_manual.yaml"
         DESTINATION "${MC_CONTROLLER_INSTALL_PREFIX}/etc")
+
+# Restore the Sake2 defaults before generating the remaining non-LEAP variants.
+set(AVATAR_LEFT_HAND_ORIENTATION_OFFSET_RPY_DEG "0.0, 0.0, 0.0")
+set(AVATAR_RIGHT_HAND_ORIENTATION_OFFSET_RPY_DEG "0.0, 0.0, 0.0")
+set(AVATAR_HAND_ORIENTATION_CALIBRATION_GUI "false")
 
 # 实体 RHPS1 的四条件实验版本。Control PC 始终加载这一套 controller；
 # Operator PC 通过 ROS 2 在运行时选择 0/1.5 秒延迟和辅助开/关。
@@ -140,6 +162,14 @@ set(AVATAR_GRIPPER_PROFILE "leap")
 set(AVATAR_GRIPPER_EXPECTED_ACTIVE_JOINTS 16)
 set(AVATAR_GRIPPER_CONTROL_MODE "analog_trigger")
 set(AVATAR_GRASP_NOTIFICATION_INPUT "grip")
+# LEAP Hand visual/kinematic frames are rotated by 90 degrees around their
+# local blue (+Z) axis relative to the calibrated anatomical hand frame.
+# The left hand uses Rz(-90 deg). The mirrored right-hand mounting needs the
+# opposite Rz(+90 deg) correction. These corrections are intentionally absent
+# from every Sake2 variant.
+set(AVATAR_LEFT_HAND_ORIENTATION_OFFSET_RPY_DEG "0.0, 0.0, -90.0")
+set(AVATAR_RIGHT_HAND_ORIENTATION_OFFSET_RPY_DEG "0.0, 0.0, 90.0")
+set(AVATAR_HAND_ORIENTATION_CALIBRATION_GUI "false")
 set(AVATAR_INITIAL_STATE "ANA::ManualInitial")
 set(AVATAR_INITIAL_STATE_OUTPUT "Standing")
 set(AVATAR_DEMO_WALK_FSM_STATE "- ANA::WalkFSM")
