@@ -145,7 +145,29 @@ def build_strategies(close_time: float) -> Dict[str, Strategy]:
     c_wrap = fingers(75, 0, 30, 10)
     d_lock = {**fingers(95, 0, 60, 35), **thumb(95, 60, 25, 30)}
 
+    # Ring: thumb and index finger close a loop around the object (in the
+    # same plane: THUMB_CMC ~80 deg brings the thumb into the index plane),
+    # middle/ring fingers only support.  Enclosure does not depend on the
+    # exact object size: a gap smaller than the object width cages it.
+    r_pre = {**fingers(20, 0, 10, 5), **thumb(80, 0, -30, 0)}
+    r_index = deg({"MCP_1": 90, "DIP_1": 50, "FINGERTIP_1": 70,
+                   "MCP_2": 60, "DIP_2": 20, "MCP_3": 60, "DIP_3": 20})
+    r_thumb = thumb(85, 0, 60, 60)
+    r_lock = deg({"MCP_1": 100, "DIP_1": 60, "FINGERTIP_1": 75,
+                  "MCP_2": 95, "DIP_2": 55, "FINGERTIP_2": 35,
+                  "MCP_3": 95, "DIP_3": 55, "FINGERTIP_3": 35})
+
     return {
+        "ring": Strategy(
+            "ring",
+            "A thumb out in index plane -> B index wraps far side -> C thumb closes the ring -> D others support",
+            r_pre,
+            [
+                Stage("B index wraps", r_index, 0.8),
+                Stage("C thumb closes ring", r_thumb, 0.8),
+                Stage("D support + lock", r_lock, 0.8),
+            ],
+        ),
         "trigger": Strategy(
             "trigger",
             "Baseline: real rear-trigger path, all 16 joints lower->upper together",
@@ -182,6 +204,7 @@ class Scene:
     bottle_height: float = 0.20
     bottle_mass: float = 0.35
     bottle_friction: float = 0.7
+    bottle_shape: str = "cylinder"  # cylinder | box (square cross-section, side = 2*radius)
     finger_friction: float = 1.0
     table_friction: float = 0.4
     armature: float = 0.003
@@ -260,8 +283,8 @@ def build_xml(robot_xml: Path, scene: Scene) -> str:
         bottle,
         "geom",
         name="bottle_geom",
-        type="cylinder",
-        size=f"{r} {h / 2}",
+        type=scene.bottle_shape,
+        size=f"{r} {h / 2}" if scene.bottle_shape == "cylinder" else f"{r} {r} {h / 2}",
         mass=str(scene.bottle_mass),
         rgba="0.15 0.5 0.9 0.75",
         friction=f"{scene.bottle_friction} 0.01 0.0001",
@@ -290,6 +313,11 @@ def build_xml(robot_xml: Path, scene: Scene) -> str:
             slider, "joint", name=f"wrist_{label}", type="slide", axis=axis,
             limited="false", armature="0", damping="0",
         )
+    # Wrist roll about the forearm axis (hand z) for the pouring test.
+    wrist.insert(0, ET.Element(
+        "joint", name="wrist_pour", type="hinge", axis="0 0 1",
+        limited="false", armature="0.01", damping="0",
+    ))
     slider.append(wrist)
 
     body_names = {b.get("name") for b in root.iter("body")}
@@ -328,6 +356,11 @@ class TrialConfig:
     hold_time: float = 0.6
     lift_height: float = 0.08
     lift_speed: float = 0.05
+    pour_deg: float = 0.0  # 0 = no pouring test; + tips the bottle top away from the palm
+    pour_speed_deg: float = 60.0
+    pour_hold: float = 1.5
+    wrist_rot_kp: float = 400.0
+    wrist_rot_kd: float = 20.0
 
 
 def hand_rotation(roll_deg: float) -> np.ndarray:
@@ -366,6 +399,37 @@ class Lab:
             if m.body(i).name.startswith("R_")
         }
         self.bottle_geom = m.geom("bottle_geom").id
+        self.pour_q = m.jnt_qposadr[m.joint("wrist_pour").id]
+        self.pour_v = m.jnt_dofadr[m.joint("wrist_pour").id]
+        self.tip_index = self._tip_offset("R_FINGERTIP_1_LINK")
+        self.tip_thumb = self._tip_offset("R_THUMB_FINGERTIP_LINK")
+
+    def _tip_offset(self, body: str) -> np.ndarray:
+        """Fingertip pad point: hull vertex farthest from the link origin."""
+        m = self.model
+        g = [i for i in range(m.ngeom) if m.geom_bodyid[i] == m.body(body).id and m.geom_contype[i]][0]
+        mid = m.geom_dataid[g]
+        v = m.mesh_vert[m.mesh_vertadr[mid] : m.mesh_vertadr[mid] + m.mesh_vertnum[mid]]
+        rot = np.zeros(9)
+        mujoco.mju_quat2Mat(rot, m.geom_quat[g])
+        pts = v @ rot.reshape(3, 3).T + m.geom_pos[g]
+        return pts[np.argmax(np.linalg.norm(pts, axis=1))]
+
+    def tip(self, body: str, offset: np.ndarray) -> np.ndarray:
+        b = self.model.body(body).id
+        return self.data.xpos[b] + self.data.xmat[b].reshape(3, 3) @ offset
+
+    def ring_gap(self) -> float:
+        return float(np.linalg.norm(
+            self.tip("R_FINGERTIP_1_LINK", self.tip_index)
+            - self.tip("R_THUMB_FINGERTIP_LINK", self.tip_thumb)
+        ))
+
+    def bottle_in_hand(self) -> Tuple[np.ndarray, np.ndarray]:
+        d = self.data
+        rw = d.xmat[self.wrist_body].reshape(3, 3)
+        rb = d.xmat[self.bottle_body].reshape(3, 3)
+        return rw.T @ (d.xpos[self.bottle_body] - d.xpos[self.wrist_body]), rw.T @ rb
 
     # -- helpers ----------------------------------------------------------
     def vec(self, pose: Dict[str, float], base: Optional[np.ndarray] = None) -> np.ndarray:
@@ -416,7 +480,10 @@ class Lab:
         m.body_quat[self.wrist_body] = quat
         m.body_pos[self.wrist_body] = 0.0
         d.qpos[self.slide_q] = start
+        d.qpos[self.pour_q] = 0.0
         wrist_target = start.copy()
+        pour_target = 0.0
+        grasp_point = np.array((0.0, 0.0, cfg.grasp_height))
 
         target = self.vec(strategy.preshape)
         d.qpos[self.joint_q] = target
@@ -447,11 +514,17 @@ class Lab:
         timeline.append(("settle", cfg.hold_time, "hold", final_target, None, None))
         timeline.append(("lift", cfg.lift_height / cfg.lift_speed, "lift", final_target, None, None))
         timeline.append(("hold lifted", 1.0, "lifted", final_target, None, None))
+        if cfg.pour_deg:
+            timeline.append(("pour", abs(cfg.pour_deg) / cfg.pour_speed_deg, "pour", final_target, None, None))
+            timeline.append(("hold poured", cfg.pour_hold, "poured", final_target, None, None))
 
         dt = m.opt.timestep
         t = 0.0
         approach_elapsed = 0.0
         lift_elapsed = 0.0
+        pour_elapsed = 0.0
+        before_pour = None
+        ring_gap = None
         first_contact = None
         first_contact_phase = None
         push = 0.0
@@ -472,6 +545,20 @@ class Lab:
                 elif motion == "lift":
                     lift_elapsed = min(cfg.lift_height / cfg.lift_speed, lift_elapsed + dt)
                     wrist_target = final + np.array((0.0, 0.0, cfg.lift_speed * lift_elapsed))
+                elif motion == "pour":
+                    if before_pour is None:
+                        before_pour = self.bottle_in_hand()
+                        lift_ok = (
+                            self.bottle_pos()[2] - bottle0[2] > 0.6 * cfg.lift_height
+                            and self.bottle_tilt_deg() < 30.0
+                        )
+                    pour_elapsed = min(abs(cfg.pour_deg) / cfg.pour_speed_deg, pour_elapsed + dt)
+                    pour_target = math.copysign(math.radians(cfg.pour_speed_deg * pour_elapsed), cfg.pour_deg)
+                    # rotate about the grasp point, not about the wrist origin
+                    c, s_ = math.cos(pour_target), math.sin(pour_target)
+                    rz = np.array(((c, -s_, 0.0), (s_, c, 0.0), (0.0, 0.0, 1.0)))
+                    lifted_point = grasp_point + np.array((0.0, 0.0, cfg.lift_height))
+                    wrist_target = lifted_point - rotation @ rz @ grasp_hand
 
                 step_max = cfg.joint_speed * dt
                 reference += np.clip(tgt - reference, -step_max, step_max)
@@ -481,6 +568,11 @@ class Lab:
                 tau = np.clip(tau, -tau_limit, tau_limit)
                 d.qfrc_applied[:] = 0.0
                 d.qfrc_applied[self.joint_v] = tau + d.qfrc_bias[self.joint_v]
+                d.qfrc_applied[self.pour_v] = (
+                    cfg.wrist_rot_kp * (pour_target - d.qpos[self.pour_q])
+                    - cfg.wrist_rot_kd * d.qvel[self.pour_v]
+                    + d.qfrc_bias[self.pour_v]
+                )
                 d.qfrc_applied[self.slide_v] = (
                     cfg.wrist_kp * (wrist_target - d.qpos[self.slide_q])
                     - cfg.wrist_kd * d.qvel[self.slide_v]
@@ -495,7 +587,9 @@ class Lab:
                     if touching:
                         first_contact = touching[0]
                         first_contact_phase = phase
-                if motion not in ("lift", "lifted"):
+                if phase == "settle":
+                    ring_gap = self.ring_gap()
+                if motion not in ("lift", "lifted", "pour", "poured"):
                     delta = self.bottle_pos() - bottle0
                     push = max(push, float(np.hypot(delta[0] - offset_world[0] * 0, delta[1])))
                     tilt = max(tilt, self.bottle_tilt_deg())
@@ -510,6 +604,17 @@ class Lab:
 
         rise = float(self.bottle_pos()[2] - bottle0[2])
         lifted = rise > 0.6 * cfg.lift_height and self.bottle_tilt_deg() < 30.0
+        slip_cm = slip_deg = None
+        poured_ok = None
+        if cfg.pour_deg and before_pour is not None:
+            p0, r0 = before_pour
+            p1, r1 = self.bottle_in_hand()
+            slip_cm = round(100 * float(np.linalg.norm(p1 - p0)), 2)
+            cos_angle = (np.trace(r0.T @ r1) - 1.0) / 2.0
+            slip_deg = round(math.degrees(math.acos(float(np.clip(cos_angle, -1.0, 1.0)))), 1)
+            poured_ok = bool(slip_cm < 2.0 and slip_deg < 15.0 and self.bottle_pos()[2] > 0.05)
+            lifted = bool(lift_ok)  # judged just before pouring
+            poured_ok = bool(poured_ok and lift_ok)
         return {
             "strategy": strategy.name,
             "offset_x_cm": round(100 * cfg.offset_x, 1),
@@ -518,6 +623,10 @@ class Lab:
             "tilt_deg": round(tilt, 1),
             "rise_cm": round(100 * rise, 1),
             "lifted": bool(lifted),
+            "ring_gap_cm": None if ring_gap is None else round(100 * ring_gap, 1),
+            "pour_slip_cm": slip_cm,
+            "pour_slip_deg": slip_deg,
+            "poured_ok": poured_ok,
             "first": first_contact or "-",
             "first_phase": first_contact_phase or "-",
             "events": events,
@@ -544,7 +653,7 @@ def print_table(rows: Sequence[dict]) -> None:
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--robot-xml", type=Path, default=DEFAULT_ROBOT_XML)
-    p.add_argument("--strategy", default="abcd", help="trigger | trigger_noabd | abcd | all")
+    p.add_argument("--strategy", default="abcd", help="trigger | trigger_noabd | abcd | ring | all")
     p.add_argument("--view", action="store_true", help="open the MuJoCo viewer (real time)")
     p.add_argument("--sweep", action="store_true", help="also vary bottle placement error")
     p.add_argument("--close-during-approach", action="store_true")
@@ -557,13 +666,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--close-time", type=float, default=1.5, help="[s] trigger strategies")
     p.add_argument("--bottle-mass", type=float, default=0.35, help="[kg]")
     p.add_argument("--bottle-radius", type=float, default=3.3, help="[cm]")
+    p.add_argument("--pour", type=float, default=0.0, help="pour test angle [deg] after lifting (+ = top away from palm)")
+    p.add_argument("--shape", default="cylinder", choices=("cylinder", "box"), help="object cross-section")
     p.add_argument("--json", type=Path, help="write results to this JSON file")
     return p.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    scene = Scene(bottle_mass=args.bottle_mass, bottle_radius=args.bottle_radius / 100.0)
+    scene = Scene(bottle_mass=args.bottle_mass, bottle_radius=args.bottle_radius / 100.0, bottle_shape=args.shape)
     lab = Lab(args.robot_xml, scene)
     strategies = build_strategies(args.close_time)
     names = list(strategies) if args.strategy == "all" else [args.strategy]
@@ -579,6 +690,7 @@ def main() -> int:
         joint_speed=args.joint_speed,
         close_time=args.close_time,
         close_during_approach=args.close_during_approach,
+        pour_deg=args.pour,
         offset_x=args.offset_x / 100.0,
         offset_z=args.offset_z / 100.0,
     )
