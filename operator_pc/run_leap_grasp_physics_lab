@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Local MuJoCo physics comparison of LEAP closure strategies (no ROS / robot).
+#   ./run_leap_grasp_physics_lab --view --strategy all --offset-x 1.5
+#   ./run_leap_grasp_physics_lab --strategy all --sweep
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")"
+exec python3 ./leap_grasp_physics_lab.py "$@"

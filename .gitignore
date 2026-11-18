@@ -26,3 +26,6 @@ __pycache__/
 .idea/
 *~
 *.swp
+
+# MuJoCo runtime log
+MUJOCO_LOG.TXT
