@@ -329,6 +329,14 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
   config("velocity_sample_timeout", velocitySampleTimeout_);
   velocityFilterAlpha_ = std::clamp(velocityFilterAlpha_, 0.0, 1.0);
   velocitySampleTimeout_ = std::max(0.0, velocitySampleTimeout_);
+  config("input_stale_timeout", inputStaleTimeout_);
+  config("target_max_linear_speed", targetMaxLinearSpeed_);
+  config("target_max_angular_speed", targetMaxAngularSpeed_);
+  config("raw_button_timeout", rawButtonTimeout_);
+  mc_rtc::log::info("[{}] input safety: stale timeout {:.2f} s, target speed limit {:.2f} m/s / {:.2f} rad/s, "
+                    "handover {:.2f} s (<= 0 disables)",
+                    name(), inputStaleTimeout_, targetMaxLinearSpeed_, targetMaxAngularSpeed_,
+                    trackingHandoverDuration_);
   config("velocity_validation", velocityValidation_);
   config("velocity_validation_arrow_scale", velocityValidationArrowScale_);
   config("velocity_validation_min_speed", velocityValidationMinSpeed_);
@@ -711,6 +719,20 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
       mc_rtc::gui::Label("Left arm tracker", [this]() { return leftArm_.hasData; }),
       mc_rtc::gui::Label("Right arm tracker", [this]() { return rightArm_.hasData; }),
       mc_rtc::gui::Label("Waist tracker", [this]() { return waist_.hasData; }),
+      mc_rtc::gui::Label("Input stale (L hand / R hand / L arm / R arm / waist)",
+                         [this]() {
+                           auto flag = [](bool b) { return std::string(b ? "STALE" : "ok"); };
+                           return flag(left_.inputStale) + " / " + flag(right_.inputStale) + " / "
+                                  + flag(leftArm_.inputStale) + " / " + flag(rightArm_.inputStale) + " / "
+                                  + flag(inputIsStale(waist_.lastValidReceiveTime));
+                         }),
+      mc_rtc::gui::Label("Speed-limited cycles (L hand / R hand / L arm / R arm)",
+                         [this]() {
+                           return std::to_string(left_.rateLimitedCycles) + " / "
+                                  + std::to_string(right_.rateLimitedCycles) + " / "
+                                  + std::to_string(leftArm_.rateLimitedCycles) + " / "
+                                  + std::to_string(rightArm_.rateLimitedCycles);
+                         }),
       mc_rtc::gui::Label("Left gripper closed", [this]() { return left_.gripperClosed; }),
       mc_rtc::gui::Label("Right gripper closed", [this]() { return right_.gripperClosed; }),
       mc_rtc::gui::Label("Gripper control mode", [this]() -> const std::string & { return gripperControlMode_; }),
@@ -869,6 +891,21 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
                            [this]() { return useAngularVelocityFeedforward_; });
   ctl.logger().addLogEntry(experimentLogPrefix + "linear-velocity-gain", this,
                            [this]() { return linearVelocityGain_; });
+
+  // 输入安全层：用于事后判断限速是否影响了正常操作，以及何时出现输入中断。
+  const std::string safetyLogPrefix = name() + "_input-safety_";
+  ctl.logger().addLogEntry(safetyLogPrefix + "left-hand-stale", this, [this]() { return left_.inputStale; });
+  ctl.logger().addLogEntry(safetyLogPrefix + "right-hand-stale", this, [this]() { return right_.inputStale; });
+  ctl.logger().addLogEntry(safetyLogPrefix + "left-arm-stale", this, [this]() { return leftArm_.inputStale; });
+  ctl.logger().addLogEntry(safetyLogPrefix + "right-arm-stale", this, [this]() { return rightArm_.inputStale; });
+  ctl.logger().addLogEntry(safetyLogPrefix + "left-hand-limited-cycles", this,
+                           [this]() { return static_cast<double>(left_.rateLimitedCycles); });
+  ctl.logger().addLogEntry(safetyLogPrefix + "right-hand-limited-cycles", this,
+                           [this]() { return static_cast<double>(right_.rateLimitedCycles); });
+  ctl.logger().addLogEntry(safetyLogPrefix + "left-arm-limited-cycles", this,
+                           [this]() { return static_cast<double>(leftArm_.rateLimitedCycles); });
+  ctl.logger().addLogEntry(safetyLogPrefix + "right-arm-limited-cycles", this,
+                           [this]() { return static_cast<double>(rightArm_.rateLimitedCycles); });
 
   setupVelocityValidation(ctl);
 
@@ -1111,31 +1148,116 @@ void ViveHandBridge::onController(HandState & hand, const Controller::SharedPtr 
   pushSample(hand, *msg);
 }
 
+ViveHandBridge::HandState * ViveHandBridge::routeController(const std::string & topic, const Controller & msg)
+{
+  // Same routing as before: serial number first, then topic. A configured serial
+  // still rejects a different controller that happens to publish on that topic.
+  if(!left_.serial.empty() && msg.serial_number == left_.serial) { return &left_; }
+  if(!right_.serial.empty() && msg.serial_number == right_.serial) { return &right_; }
+  if(topic == left_.topic && (left_.serial.empty() || msg.serial_number == left_.serial)) { return &left_; }
+  if(topic == right_.topic && (right_.serial.empty() || msg.serial_number == right_.serial)) { return &right_; }
+  return nullptr;
+}
+
 void ViveHandBridge::onAnyController(const std::string & topic, const Controller::SharedPtr msg)
 {
+  HandState * hand = routeController(topic, *msg);
+  if(!hand)
+  {
+    return;
+  }
   if(!msg->pose_is_valid)
   {
+    // Lost tracking (e.g. occluded controller): keep the pose frozen but still read
+    // the menu button so that the pause gesture keeps working.
+    updateRawButtons(*hand, *msg);
     return;
   }
-  if(!left_.serial.empty() && msg->serial_number == left_.serial)
+  onController(*hand, msg);
+}
+
+void ViveHandBridge::updateRawButtons(HandState & hand, const Controller & msg)
+{
+  const double receiveTime = now();
+  hand.rawResetButton = msg.menu_button;
+  if(msg.menu_button && !hand.previousReceivedResetButton)
   {
-    onController(left_, msg);
-    return;
+    hand.resetPressPending = true;
+    hand.resetPressTime = receiveTime;
+    ++hand.resetPressCount;
   }
-  if(!right_.serial.empty() && msg->serial_number == right_.serial)
+  hand.previousReceivedResetButton = msg.menu_button;
+  hand.lastRawReceiveTime = receiveTime;
+}
+
+bool ViveHandBridge::rawButtonsFresh(const HandState & hand) const
+{
+  return hand.lastRawReceiveTime >= 0.0 && (rawButtonTimeout_ <= 0.0 || now() - hand.lastRawReceiveTime <= rawButtonTimeout_);
+}
+
+bool ViveHandBridge::inputIsStale(double lastValidReceiveTime) const
+{
+  return inputStaleTimeout_ > 0.0
+         && (lastValidReceiveTime < 0.0 || now() - lastValidReceiveTime > inputStaleTimeout_);
+}
+
+sva::PTransformd ViveHandBridge::rateLimitTarget(const sva::PTransformd & current,
+                                                 const sva::PTransformd & target,
+                                                 double dt,
+                                                 uint64_t & limitedCycles) const
+{
+  if(!target.translation().allFinite() || !target.rotation().allFinite())
   {
-    onController(right_, msg);
-    return;
+    // Never forward a non-finite target to the QP; keep the previous one.
+    ++limitedCycles;
+    return current;
   }
-  if(topic == left_.topic)
+  bool limited = false;
+  Eigen::Vector3d translation = target.translation();
+  if(targetMaxLinearSpeed_ > 0.0)
   {
-    onController(left_, msg);
-    return;
+    const Eigen::Vector3d delta = target.translation() - current.translation();
+    const double maxStep = targetMaxLinearSpeed_ * dt;
+    const double distance = delta.norm();
+    if(distance > maxStep)
+    {
+      translation = current.translation() + delta * (maxStep / distance);
+      limited = true;
+    }
   }
-  if(topic == right_.topic)
+  Eigen::Matrix3d rotation = target.rotation();
+  if(targetMaxAngularSpeed_ > 0.0)
   {
-    onController(right_, msg);
+    // Slerp is convention independent, so it works directly on the sva rotation matrices.
+    const Eigen::Quaterniond from(current.rotation());
+    const Eigen::Quaterniond to(target.rotation());
+    const double angle = from.angularDistance(to);
+    const double maxStep = targetMaxAngularSpeed_ * dt;
+    if(angle > maxStep && angle > 1e-9)
+    {
+      rotation = from.slerp(maxStep / angle, to).normalized().toRotationMatrix();
+      limited = true;
+    }
   }
+  if(limited) { ++limitedCycles; }
+  return sva::PTransformd(rotation, translation);
+}
+
+sva::MotionVecd ViveHandBridge::clampFeedforwardVelocity(const sva::MotionVecd & velocity) const
+{
+  Eigen::Vector3d angular = velocity.angular();
+  Eigen::Vector3d linear = velocity.linear();
+  if(!angular.allFinite()) { angular.setZero(); }
+  if(!linear.allFinite()) { linear.setZero(); }
+  if(targetMaxAngularSpeed_ > 0.0 && angular.norm() > targetMaxAngularSpeed_)
+  {
+    angular *= targetMaxAngularSpeed_ / angular.norm();
+  }
+  if(targetMaxLinearSpeed_ > 0.0 && linear.norm() > targetMaxLinearSpeed_)
+  {
+    linear *= targetMaxLinearSpeed_ / linear.norm();
+  }
+  return sva::MotionVecd(angular, linear);
 }
 
 void ViveHandBridge::onTracker(TrackerState & tracker, const Tracker::SharedPtr msg)
@@ -1387,7 +1509,8 @@ bool ViveHandBridge::startOrResumeTracking(mc_control::fsm::Controller & ctl)
   trackingStarted_ = true;
   trackingPaused_ = false;
   trackingEverStarted_ = true;
-  trackingHandoverStartTime_ = -1.0;
+  // 开始/继续时从保持姿态平滑过渡到操作者手位（只影响这一段，不影响之后的连续跟随）。
+  trackingHandoverStartTime_ = trackingHandoverDuration_ > 0.0 ? now() : -1.0;
   autoZeroDone_ = true;
   zeroRequested_ = false;
   initialWaitingForDataLogged_ = false;
@@ -1600,6 +1723,8 @@ void ViveHandBridge::clearInputHistories()
     state.history.clear();
     state.hasData = false;
     state.latestSampleTime = 0.0;
+    state.lastValidReceiveTime = -1.0;
+    state.inputStale = false;
     state.previousTargetValid = false;
     state.heldTargetVelocity = sva::MotionVecd::Zero();
   };
@@ -1611,6 +1736,8 @@ void ViveHandBridge::clearInputHistories()
 
   left_.rawResetButton = false;
   right_.rawResetButton = false;
+  left_.lastRawReceiveTime = -1.0;
+  right_.lastRawReceiveTime = -1.0;
   left_.previousReceivedResetButton = false;
   right_.previousReceivedResetButton = false;
   left_.resetPressPending = false;
@@ -1665,14 +1792,8 @@ double ViveHandBridge::now() const
 void ViveHandBridge::pushSample(HandState & state, const Controller & msg)
 {
   const double sampleTime = now();
-  state.rawResetButton = msg.menu_button;
-  if(msg.menu_button && !state.previousReceivedResetButton)
-  {
-    state.resetPressPending = true;
-    state.resetPressTime = sampleTime;
-    ++state.resetPressCount;
-  }
-  state.previousReceivedResetButton = msg.menu_button;
+  updateRawButtons(state, msg);
+  state.lastValidReceiveTime = sampleTime;
   state.history.push_back({sampleTime, msg});
   if(inputDelay_ <= 0.0)
   {
@@ -1685,6 +1806,7 @@ void ViveHandBridge::pushSample(HandState & state, const Controller & msg)
 void ViveHandBridge::pushSample(TrackerState & state, const Tracker & msg)
 {
   const double sampleTime = now();
+  state.lastValidReceiveTime = sampleTime;
   state.history.push_back({sampleTime, msg});
   if(inputDelay_ <= 0.0)
   {
@@ -2114,6 +2236,26 @@ void ViveHandBridge::updateHand(mc_control::fsm::Controller & ctl, HandState & h
   {
     return;
   }
+  {
+    // 输入超时：手柄（以及 direct 模式下的腰部 tracker）超过 input_stale_timeout 没有有效位姿时，
+    // 冻结当前目标并清零速度前馈；数据恢复后由下面的目标限速平滑追上，不会跳变。
+    const bool stale = inputIsStale(hand.lastValidReceiveTime)
+                       || (directWaistControl_ && useWaistReference_ && inputIsStale(waist_.lastValidReceiveTime));
+    const char * side = &hand == &left_ ? "left" : "right";
+    if(stale != hand.inputStale)
+    {
+      hand.inputStale = stale;
+      if(stale) { mc_rtc::log::warning("[{}] {} hand input stale: holding target", name(), side); }
+      else { mc_rtc::log::info("[{}] {} hand input recovered", name(), side); }
+    }
+    if(stale)
+    {
+      hand.task->targetVel(sva::MotionVecd::Zero());
+      hand.previousTargetValid = false;
+      hand.heldTargetVelocity = sva::MotionVecd::Zero();
+      return;
+    }
+  }
   sva::PTransformd target = directWaistControl_ ? hand.task->target() : hand.zeroRobot;
   if(directWaistControl_)
   {
@@ -2272,6 +2414,8 @@ void ViveHandBridge::updateHand(mc_control::fsm::Controller & ctl, HandState & h
   {
     target = blendFromTrackingHold(hand.zeroRobot, target);
   }
+  // 目标限速：VIVE 偶发的位姿跳变变成有限速度的平滑移动；正常手部动作通常不触发。
+  target = rateLimitTarget(hand.task->target(), target, ctl.timeStep, hand.rateLimitedCycles);
   hand.task->target(target);
   const auto worldVelocity =
       computeTargetVelocity(hand.previousTarget,
@@ -2282,8 +2426,8 @@ void ViveHandBridge::updateHand(mc_control::fsm::Controller & ctl, HandState & h
                             std::max(hand.latestSampleTime,
                                      useWaistReference_ ? waist_.latestSampleTime : 0.0),
                             velocityValidation_ ? &hand.velocityDiagnostics : nullptr);
-  const auto commandWorldVelocity =
-      useVelocityFeedforward_ ? feedforwardVelocity(worldVelocity) : sva::MotionVecd::Zero();
+  const auto commandWorldVelocity = clampFeedforwardVelocity(
+      useVelocityFeedforward_ ? feedforwardVelocity(worldVelocity) : sva::MotionVecd::Zero());
   if(velocityValidation_)
   {
     updateVelocityDiagnostics(hand, target, worldVelocity, commandWorldVelocity);
@@ -2299,6 +2443,24 @@ void ViveHandBridge::updateArm(mc_control::fsm::Controller & ctl, TrackerState &
   if(!tracker.hasData || !tracker.task)
   {
     return;
+  }
+  {
+    const bool stale = inputIsStale(tracker.lastValidReceiveTime)
+                       || (directWaistControl_ && useWaistReference_ && inputIsStale(waist_.lastValidReceiveTime));
+    const char * side = &tracker == &leftArm_ ? "left" : "right";
+    if(stale != tracker.inputStale)
+    {
+      tracker.inputStale = stale;
+      if(stale) { mc_rtc::log::warning("[{}] {} arm tracker input stale: holding target", name(), side); }
+      else { mc_rtc::log::info("[{}] {} arm tracker input recovered", name(), side); }
+    }
+    if(stale)
+    {
+      tracker.task->targetVel(sva::MotionVecd::Zero());
+      tracker.previousTargetValid = false;
+      tracker.heldTargetVelocity = sva::MotionVecd::Zero();
+      return;
+    }
   }
   sva::PTransformd target = directWaistControl_ ? tracker.task->target() : tracker.zeroRobot;
   if(directWaistControl_)
@@ -2341,6 +2503,7 @@ void ViveHandBridge::updateArm(mc_control::fsm::Controller & ctl, TrackerState &
   {
     target = blendFromTrackingHold(tracker.zeroRobot, target);
   }
+  target = rateLimitTarget(tracker.task->target(), target, ctl.timeStep, tracker.rateLimitedCycles);
   tracker.task->target(target);
   const auto worldVelocity =
       computeTargetVelocity(tracker.previousTarget,
@@ -2358,7 +2521,7 @@ void ViveHandBridge::updateArm(mc_control::fsm::Controller & ctl, TrackerState &
     // 当前现场现象是腋下开合会出现“反向蓄力”，因此只先翻转对应的角速度轴。
     commandWorldVelocity.angular() = armAngularVelocitySignFix_.cwiseProduct(commandWorldVelocity.angular());
   }
-  tracker.task->targetVel(commandWorldVelocity);
+  tracker.task->targetVel(clampFeedforwardVelocity(commandWorldVelocity));
   publishLegacyPoseVelocity(tracker.legacyPosePub, tracker.legacyVelocityPub, target, worldVelocity);
 }
 
@@ -3792,12 +3955,10 @@ bool ViveHandBridge::confirmGrasp(HandState & hand,
 
 bool ViveHandBridge::resetPressed(HandState & hand) const
 {
-  if(!hand.hasData)
-  {
-    return false;
-  }
   // 当前实验固定使用 menu 作为启动/复位键，避免位掩码或触摸板产生别名事件。
-  return hand.latest.menu_button;
+  // menu 是安全/会话操作而不是任务动作：使用最新收到的按键状态，
+  // 既不随实验输入延迟一起延后，也不因手柄暂时丢失追踪 (pose_is_valid=false) 而失效。
+  return rawButtonsFresh(hand) && hand.rawResetButton;
 }
 
 bool ViveHandBridge::gripperPressed(HandState & hand) const

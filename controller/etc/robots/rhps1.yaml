@@ -318,7 +318,18 @@ states:
     use_waist_reference: true
     direct_waist_control: true
     direct_waist_keep_hand_side: true
-    tracking_handover_duration: 0.0
+    # 按 menu 开始/继续时，手和大臂目标从保持姿态平滑过渡到操作者手位的时间 [s]。
+    # 只影响这一段接管，不影响之后的连续跟随；0 = 立即跟随。
+    tracking_handover_duration: 1.0
+    # ---- 输入安全层（<= 0 关闭对应项）----
+    # 手柄/腰部/大臂 tracker 超过该时间没有有效位姿时，冻结目标并清零速度前馈 [s]。
+    input_stale_timeout: 0.25
+    # 手和大臂任务目标的最大移动速度。正常手部动作通常不触发，VIVE 位姿跳变会被平滑。
+    # 真机日志 *_input-safety_*-limited-cycles 持续增长说明限速影响了正常操作，可适当调高。
+    target_max_linear_speed: 1.5   # [m/s]
+    target_max_angular_speed: 4.0  # [rad/s]
+    # 超过该时间未收到任何手柄消息时，menu 按键视为未按下 [s]。
+    raw_button_timeout: 0.5
     direct_waist_max_distance: 1.2
     robot_waist_frame: "BODY"
     left_hand_orientation_offset_rpy_deg: [0.0, 0.0, 0.0]

@@ -68,6 +68,14 @@ private:
     double latestSampleTime = 0.0;
     bool hasData = false;
     bool zeroed = false;
+    // Input safety: receive time of the newest pose-valid sample, receive time of the
+    // newest message of any validity (buttons stay usable while the pose is invalid),
+    // whether the target is currently frozen as stale, and how many control cycles
+    // had their target speed-limited.
+    double lastValidReceiveTime = -1.0;
+    double lastRawReceiveTime = -1.0;
+    bool inputStale = false;
+    uint64_t rateLimitedCycles = 0;
     bool rawResetButton = false;
     bool previousReceivedResetButton = false;
     bool resetPressPending = false;
@@ -110,6 +118,9 @@ private:
     double latestSampleTime = 0.0;
     bool hasData = false;
     bool zeroed = false;
+    double lastValidReceiveTime = -1.0;
+    bool inputStale = false;
+    uint64_t rateLimitedCycles = 0;
     Eigen::Vector3d zeroPosition = Eigen::Vector3d::Zero();
     Eigen::Matrix3d zeroRotation = Eigen::Matrix3d::Identity();
     sva::PTransformd zeroRobot = sva::PTransformd::Identity();
@@ -123,6 +134,15 @@ private:
   };
 
   void onController(HandState & hand, const Controller::SharedPtr msg);
+  void updateRawButtons(HandState & hand, const Controller & msg);
+  HandState * routeController(const std::string & topic, const Controller & msg);
+  bool inputIsStale(double lastValidReceiveTime) const;
+  bool rawButtonsFresh(const HandState & hand) const;
+  sva::PTransformd rateLimitTarget(const sva::PTransformd & current,
+                                   const sva::PTransformd & target,
+                                   double dt,
+                                   uint64_t & limitedCycles) const;
+  sva::MotionVecd clampFeedforwardVelocity(const sva::MotionVecd & velocity) const;
   void onTracker(TrackerState & tracker, const Tracker::SharedPtr msg);
   void onAnyController(const std::string & topic, const Controller::SharedPtr msg);
   void onAnyTracker(const std::string & topic, const Tracker::SharedPtr msg);
@@ -238,6 +258,14 @@ private:
   bool initialWaitingForDataLogged_ = false;
   double trackingHandoverStartTime_ = -1.0;
   double trackingHandoverDuration_ = 2.0;
+  // Input safety layer (<= 0 disables each item).
+  // Freeze a hand/arm target when no pose-valid sample arrived for this long [s].
+  double inputStaleTimeout_ = 0.25;
+  // Maximum speed at which a hand/arm task target may move [m/s, rad/s].
+  double targetMaxLinearSpeed_ = 1.5;
+  double targetMaxAngularSpeed_ = 4.0;
+  // Menu state from messages older than this is ignored [s].
+  double rawButtonTimeout_ = 0.5;
   double twoHandPressWindow_ = 0.5;
   double twoHandPauseHoldDuration_ = 1.5;
   double bothMenuHoldStartTime_ = -1.0;
