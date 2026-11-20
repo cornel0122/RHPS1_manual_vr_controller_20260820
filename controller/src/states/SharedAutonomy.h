@@ -47,6 +47,16 @@ private:
   void setAssistanceStatus(const std::string & status, bool problem);
   void readHumanTarget(mc_control::fsm::Controller & ctl);
   void applyAssistOffset(mc_control::fsm::Controller & ctl, const Eigen::Vector3d & desiredOffset);
+  // Shadow mode (single-target blending only): the assistance is computed with the same
+  // dynamics and logged as computed-offset, but the robot's applied offset stays at zero.
+  //  - apply_assistance=false: shadow even in conditions with assistance (first robot trials).
+  //  - shadow_when_assistance_off=true: conditions without assistance still log what the
+  //    assistance would have done, for offline comparison.
+  bool applyAssistance_ = true;
+  bool shadowWhenAssistanceOff_ = true;
+  bool shadow_ = false;
+  Eigen::Vector3d computedOffset_ = Eigen::Vector3d::Zero();
+  void commandAssist(mc_control::fsm::Controller & ctl, const Eigen::Vector3d & desiredOffset);
   std::string experimentAssistanceKey_ = "ANA::Experiment::assistance_enabled";
   bool warnedMissingData_ = false;
   double alpha;

@@ -490,6 +490,12 @@ states:
     single_target_blending: true
     # 辅助偏移的最大变化速度 [m/s]，辅助开始和撤销都受此限制。
     assist_offset_max_speed: 0.3
+    # shadow（只计算并记录 computed-offset，不作用到机器人；仅单目标融合模式）：
+    #   apply_assistance: false            -> 有辅助的条件也只做 shadow（首次上真机建议先这样），
+    #                                         RViz Avatar/Shared Autonomy 可随时勾选切换
+    #   shadow_when_assistance_off: true   -> 无辅助条件(1/3)也记录“如果辅助会怎样”，供离线对比
+    apply_assistance: true
+    shadow_when_assistance_off: true
     overwritten_Task: "ANA::LeftHandRetargeting"
     translationStiffness: 0.25
     orientationStiffness: 3

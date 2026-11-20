@@ -14,6 +14,8 @@ void SharedAutonomy::configure(const mc_rtc::Configuration & config)
   config("experiment_assistance_key", experimentAssistanceKey_);
   config("single_target_blending", singleTargetBlending_);
   config("assist_offset_max_speed", assistOffsetMaxSpeed_);
+  config("apply_assistance", applyAssistance_);
+  config("shadow_when_assistance_off", shadowWhenAssistanceOff_);
   assistOffsetMaxSpeed_ = std::max(0.0, assistOffsetMaxSpeed_);
   config("overwritten_Task", overwritten_Task);
   config("translationStiffness", stiffness_);
@@ -97,6 +99,25 @@ void SharedAutonomy::applyAssistOffset(mc_control::fsm::Controller & ctl, const 
   lastWrittenValid_ = true;
 }
 
+void SharedAutonomy::commandAssist(mc_control::fsm::Controller & ctl, const Eigen::Vector3d & desiredOffset)
+{
+  if(shadow_)
+  {
+    // Same rate-limited dynamics as the applied offset, but never written to the robot.
+    Eigen::Vector3d delta = desiredOffset - computedOffset_;
+    if(!delta.allFinite()) { delta = -computedOffset_; }
+    const double maxStep = assistOffsetMaxSpeed_ * ctl.timeStep;
+    if(delta.norm() > maxStep) { delta *= maxStep / delta.norm(); }
+    computedOffset_ += delta;
+    applyAssistOffset(ctl, Eigen::Vector3d::Zero());
+  }
+  else
+  {
+    applyAssistOffset(ctl, desiredOffset);
+    computedOffset_ = assistOffset_;
+  }
+}
+
 void SharedAutonomy::fallbackToManualRetargetting(mc_control::fsm::Controller & ctl)
 {
   if(ctl.datastore().has(overwritten_Task))
@@ -127,6 +148,10 @@ void SharedAutonomy::addExperimentLogs(mc_control::fsm::Controller & ctl)
   ctl.logger().addLogEntry(prefix + "blended-target-position", this,
                            [this]() -> const Eigen::Vector3d & { return blendedTargetPosition_; });
   ctl.logger().addLogEntry(prefix + "assist-offset", this, [this]() -> const Eigen::Vector3d & { return assistOffset_; });
+  ctl.logger().addLogEntry(prefix + "computed-offset", this,
+                           [this]() -> const Eigen::Vector3d & { return computedOffset_; });
+  ctl.logger().addLogEntry(prefix + "shadow", this, [this]() { return shadow_; });
+  ctl.logger().addLogEntry(prefix + "apply-assistance", this, [this]() { return applyAssistance_; });
   ctl.logger().addLogEntry(prefix + "data-ready", this, [this]() { return dataReady_; });
   ctl.logger().addLogEntry(prefix + "selected-for-assistance", this, [this]() { return selectedForAssistance_; });
   ctl.logger().addLogEntry(prefix + "assistance-requested", this, [this]() { return assistanceRequested_; });
@@ -302,7 +327,11 @@ void SharedAutonomy::start(mc_control::fsm::Controller & ctl)
     ctl.solver().addTask(hand_taskTranslation);
   }
   assistOffset_.setZero();
+  computedOffset_.setZero();
   lastWrittenValid_ = false;
+  // Initialise the logged operator/blended targets so the first log rows are meaningful.
+  readHumanTarget(ctl);
+  blendedTargetPosition_ = humanTargetPosition_;
   mc_rtc::log::info("[{}] Shared-autonomy execution mode: {}", name(),
                     singleTargetBlending_ ? "single blended hand target (rate-limited offset)"
                                           : "legacy dual weighted QP tasks");
@@ -313,6 +342,13 @@ void SharedAutonomy::start(mc_control::fsm::Controller & ctl)
       mc_rtc::gui::Label("Goal", [this]() -> const std::string & { return currentGoalNameLog_; }),
       mc_rtc::gui::Label("Alpha", [this]() { return effectiveAlpha_; }),
       mc_rtc::gui::Label("Assist offset [m]", [this]() { return assistOffset_.norm(); }),
+      mc_rtc::gui::Label("Computed offset [m] (shadow or applied)", [this]() { return computedOffset_.norm(); }),
+      mc_rtc::gui::Checkbox(
+          "Apply assistance to the robot (unchecked = shadow only)", [this]() { return applyAssistance_; },
+          [this]() {
+            applyAssistance_ = !applyAssistance_;
+            mc_rtc::log::warning("[{}] apply_assistance set to {} from the GUI", name(), applyAssistance_);
+          }),
       mc_rtc::gui::Label("Mode", [this]() {
         return std::string(singleTargetBlending_ ? "single target (offset)" : "legacy dual task");
       }));
@@ -342,11 +378,17 @@ bool SharedAutonomy::run(mc_control::fsm::Controller & ctl)
   experimentGateOpen_ = !useExperimentAssistanceGate_
                         || (ctl.datastore().has(experimentAssistanceKey_)
                             && ctl.datastore().get<bool>(experimentAssistanceKey_));
-  if(!experimentGateOpen_)
+  // shadow_: compute and log the assistance without applying it (single-target mode only).
+  shadow_ = singleTargetBlending_
+            && ((experimentGateOpen_ && !applyAssistance_) || (!experimentGateOpen_ && shadowWhenAssistanceOff_));
+  const bool computeAssistance = (experimentGateOpen_ && applyAssistance_) || shadow_;
+  if(!computeAssistance)
   {
-    setAssistanceStatus("OFF: current condition has no assistance", false);
+    setAssistanceStatus(experimentGateOpen_ ? "OFF: apply_assistance is false (legacy dual-task mode has no shadow)"
+                                            : "OFF: current condition has no assistance",
+                        false);
     fallbackToManualRetargetting(ctl);
-    applyAssistOffset(ctl, Eigen::Vector3d::Zero());
+    commandAssist(ctl, Eigen::Vector3d::Zero());
     dataReady_ = false;
     selectedForAssistance_ = false;
     assistanceRequested_ = false;
@@ -363,11 +405,15 @@ bool SharedAutonomy::run(mc_control::fsm::Controller & ctl)
   {
     // Logged on every transition (not only once per run): an assistance condition that
     // silently behaves like manual teleoperation would invalidate the experiment.
-    setAssistanceStatus(enabled_ ? "WAITING: assistance allowed but no intent/goal data, running as manual teleoperation"
-                                 : "OFF: shared autonomy disabled in the configuration",
-                        enabled_);
+    if(!enabled_) { setAssistanceStatus("OFF: shared autonomy disabled in the configuration", false); }
+    else if(shadow_) { setAssistanceStatus("SHADOW WAITING: no intent/goal data to evaluate", false); }
+    else
+    {
+      setAssistanceStatus("WAITING: assistance allowed but no intent/goal data, running as manual teleoperation",
+                          true);
+    }
     fallbackToManualRetargetting(ctl);
-    applyAssistOffset(ctl, Eigen::Vector3d::Zero());
+    commandAssist(ctl, Eigen::Vector3d::Zero());
     selectedForAssistance_ = false;
     assistanceRequested_ = false;
     currentGoalNameLog_ = "none";
@@ -647,8 +693,8 @@ bool SharedAutonomy::run(mc_control::fsm::Controller & ctl)
     {
       // blended = (1 - alpha) * operator + alpha * goal  <=>  operator + alpha * (goal - operator)
       const double a = std::clamp(alpha, 0.0, 1.0);
-      applyAssistOffset(ctl, translationAssist ? Eigen::Vector3d(a * (targetPosition - humanTargetPosition_))
-                                               : Eigen::Vector3d::Zero());
+      commandAssist(ctl, translationAssist ? Eigen::Vector3d(a * (targetPosition - humanTargetPosition_))
+                                           : Eigen::Vector3d::Zero());
       hand_taskTranslation->weight(0);
       currentHandTask->weight(800);
     }
@@ -673,11 +719,22 @@ bool SharedAutonomy::run(mc_control::fsm::Controller & ctl)
     }
     const bool translationActive = translationAssist && alpha > 0.0;
     const bool orientationActive = !singleTargetBlending_ && enableOrientationTask && !needToWaitBis && alpha > 0.0;
-    setAssistanceStatus(translationActive ? "ACTIVE: assisting towards " + currentGoalNameLog_
-                                          : "HOLD: goal " + currentGoalNameLog_ + " predicted but assistance waits",
-                        false);
-    updateAssistanceMetrics(
-        ctl, translationActive || orientationActive, translationActive, orientationActive, alpha);
+    if(shadow_)
+    {
+      setAssistanceStatus(translationActive ? "SHADOW: would assist towards " + currentGoalNameLog_ + " (not applied)"
+                                            : "SHADOW HOLD: goal " + currentGoalNameLog_ + " predicted, would wait",
+                          false);
+      // Metrics count applied assistance only; the shadow offset is logged separately.
+      updateAssistanceMetrics(ctl, false, false, false, 0.0);
+    }
+    else
+    {
+      setAssistanceStatus(translationActive ? "ACTIVE: assisting towards " + currentGoalNameLog_
+                                            : "HOLD: goal " + currentGoalNameLog_ + " predicted but assistance waits",
+                          false);
+      updateAssistanceMetrics(
+          ctl, translationActive || orientationActive, translationActive, orientationActive, alpha);
+    }
   }
   else
   {
@@ -686,9 +743,10 @@ bool SharedAutonomy::run(mc_control::fsm::Controller & ctl)
     hand_taskTranslation->reset();
     //hand_taskOrientation->reset();
     hand_taskOrientationDown->reset();
-    applyAssistOffset(ctl, Eigen::Vector3d::Zero());
-    setAssistanceStatus(!selectedForAssistance_ ? "IDLE: predicted goal belongs to the other hand"
-                                                : "IDLE: alpha = 0 (low confidence or stale intent)",
+    commandAssist(ctl, Eigen::Vector3d::Zero());
+    setAssistanceStatus(std::string(shadow_ ? "SHADOW " : "")
+                            + (!selectedForAssistance_ ? "IDLE: predicted goal belongs to the other hand"
+                                                       : "IDLE: alpha = 0 (low confidence or stale intent)"),
                         false);
     updateAssistanceMetrics(ctl, false, false, false, 0.0);
   }
