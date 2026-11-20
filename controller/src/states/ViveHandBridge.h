@@ -1,6 +1,7 @@
 #pragma once
 
 #include <mc_control/fsm/State.h>
+#include <mc_control/generic_gripper.h>
 #include <mc_tasks/ForceConstrainedTransformTask.h>
 #include <mc_tasks/PostureTask.h>
 #include <mc_tasks/TransformTask.h>
@@ -81,6 +82,11 @@ private:
     bool gripperCommandActive = false;
     bool analogOpeningInitialized = false;
     double analogOpening = 0.0;
+    // Ring trigger path (right LEAP hand only): filtered trigger progress in [0, 1]
+    // and the rate-limited 16-joint command that is sent to the gripper.
+    bool ringProgressInitialized = false;
+    double ringProgress = 0.0;
+    std::vector<double> ringCommandQ;
     Eigen::Vector3d zeroVive = Eigen::Vector3d::Zero();
     Eigen::Matrix3d zeroRotation = Eigen::Matrix3d::Identity();
     sva::PTransformd zeroRobot = sva::PTransformd::Identity();
@@ -204,6 +210,14 @@ private:
   bool gripperPressed(HandState & hand) const;
   bool graspNotificationPressed(const HandState & hand) const;
   double analogGripperOpening(HandState & hand);
+  double analogTriggerProgress(HandState & hand);
+  bool initializeRingPath(mc_control::fsm::Controller & ctl);
+  bool ringPathActive() const;
+  std::vector<double> ringModelTarget(double progress) const;
+  std::vector<double> ringModelToCommand(const std::vector<double> & modelQ) const;
+  void updateRingGripper(mc_control::fsm::Controller & ctl, HandState & hand, mc_control::Gripper & gripper);
+  std::string ringSegmentLabel(double progress) const;
+  void addRingPathGui(mc_control::fsm::Controller & ctl);
   bool leftEnabled() const;
   bool rightEnabled() const;
 
@@ -426,6 +440,23 @@ private:
   double leapBuiltinThumbClosureScale_ = 1.0;
   std::vector<double> leapSequenceFromQ_;
   std::vector<double> leapSequenceToQ_;
+
+  // Right-hand trigger closure path: "linear" keeps the whole-hand opening mapping,
+  // "ring" follows the A->B->C->D keyframes (thumb and index close a loop).
+  // Keyframes are in model/URDF convention; command = sign * model + offset.
+  std::string leapTriggerPath_ = "linear";
+  bool ringConfigValid_ = false;
+  bool ringDirectionVerified_ = false;
+  bool ringAvailable_ = false;
+  std::string ringStatus_ = "not configured";
+  std::array<std::vector<double>, 4> ringKeyframesModel_;
+  std::array<double, 4> ringBreakpoints_ = {0.0, 0.30, 0.65, 1.0};
+  double ringMaxSpeed_ = 1.5707963267948966; // rad/s (90 deg/s)
+  std::vector<double> ringJointSign_;
+  std::vector<double> ringJointOffset_;
+  std::vector<double> ringJointMinimum_;
+  std::vector<double> ringJointMaximum_;
+  bool leapRingCandidatesLoadRequested_ = false;
 
   bool rightArmTestAvailable_ = false;
   bool rightArmTestArmed_ = false;

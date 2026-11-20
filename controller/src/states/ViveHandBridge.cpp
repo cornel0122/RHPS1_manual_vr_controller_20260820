@@ -181,6 +181,93 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
   }
   config("leap_builtin_thumb_closure_scale", leapBuiltinThumbClosureScale_);
   leapBuiltinThumbClosureScale_ = std::clamp(leapBuiltinThumbClosureScale_, 0.0, 1.0);
+
+  // Ring trigger path for the right LEAP hand. Any invalid entry keeps the linear path.
+  config("leap_trigger_path", leapTriggerPath_);
+  if(leapTriggerPath_ != "linear" && leapTriggerPath_ != "ring")
+  {
+    mc_rtc::log::warning("[{}] unknown leap_trigger_path '{}'; using linear", name(), leapTriggerPath_);
+    leapTriggerPath_ = "linear";
+  }
+  ringConfigValid_ = false;
+  ringStatus_ = "not configured (leap_ring missing)";
+  if(config.has("leap_ring"))
+  {
+    const auto ring = config("leap_ring");
+    constexpr size_t leapJointCount = 16;
+    std::string problem;
+    const std::array<std::string, 4> labels = {"A", "B", "C", "D"};
+    for(size_t k = 0; k < labels.size() && problem.empty(); ++k)
+    {
+      std::vector<double> keyframeDeg;
+      ring(labels[k], keyframeDeg);
+      if(keyframeDeg.size() != leapJointCount)
+      {
+        problem = "keyframe " + labels[k] + " must contain 16 values";
+        break;
+      }
+      ringKeyframesModel_[k].clear();
+      for(const double value : keyframeDeg) { ringKeyframesModel_[k].push_back(mc_rtc::constants::toRad(value)); }
+    }
+    std::vector<double> breakpoints(ringBreakpoints_.begin(), ringBreakpoints_.end());
+    ring("breakpoints", breakpoints);
+    if(problem.empty())
+    {
+      if(breakpoints.size() != 4 || breakpoints.front() != 0.0 || breakpoints.back() != 1.0
+         || !(breakpoints[0] < breakpoints[1] && breakpoints[1] < breakpoints[2] && breakpoints[2] < breakpoints[3]))
+      {
+        problem = "breakpoints must be four increasing values from 0 to 1";
+      }
+      else
+      {
+        std::copy(breakpoints.begin(), breakpoints.end(), ringBreakpoints_.begin());
+      }
+    }
+    double maxSpeedDeg = mc_rtc::constants::toDeg(ringMaxSpeed_);
+    ring("max_speed_deg_s", maxSpeedDeg);
+    ringMaxSpeed_ = mc_rtc::constants::toRad(std::clamp(maxSpeedDeg, 5.0, 180.0));
+    std::vector<double> sign(leapJointCount, 1.0);
+    std::vector<double> offsetDeg(leapJointCount, 0.0);
+    ring("joint_sign", sign);
+    ring("joint_offset_deg", offsetDeg);
+    ring("direction_verified", ringDirectionVerified_);
+    if(problem.empty() && (sign.size() != leapJointCount || offsetDeg.size() != leapJointCount))
+    {
+      problem = "joint_sign and joint_offset_deg must contain 16 values";
+    }
+    if(problem.empty())
+    {
+      for(const double s : sign)
+      {
+        if(s != 1.0 && s != -1.0) { problem = "joint_sign entries must be +1 or -1"; }
+      }
+    }
+    if(problem.empty())
+    {
+      ringJointSign_ = sign;
+      ringJointOffset_.clear();
+      for(const double value : offsetDeg) { ringJointOffset_.push_back(mc_rtc::constants::toRad(value)); }
+      ringConfigValid_ = true;
+      ringStatus_ = "configured";
+    }
+    else
+    {
+      ringStatus_ = "invalid leap_ring: " + problem;
+      mc_rtc::log::error("[{}] {}; the right trigger keeps the linear path", name(), ringStatus_);
+    }
+  }
+  if(leapTriggerPath_ == "ring" && !ringConfigValid_)
+  {
+    mc_rtc::log::warning("[{}] leap_trigger_path=ring requested but {}; using linear", name(), ringStatus_);
+    leapTriggerPath_ = "linear";
+  }
+  if(leapTriggerPath_ == "ring" && !ringDirectionVerified_)
+  {
+    mc_rtc::log::warning("[{}] leap_trigger_path=ring requested but leap_ring.direction_verified is false; "
+                         "using linear (RViz ring preview stays available)",
+                         name());
+    leapTriggerPath_ = "linear";
+  }
   config("right_arm_tuning_apply_duration", rightArmTestApplyDuration_);
   std::vector<double> rightArmDefaultPoseDeg = {-30.0, -20.0, 5.0, -120.0, -20.0, 0.0, 20.0};
   config("right_arm_tuning_pose_deg", rightArmDefaultPoseDeg);
@@ -594,6 +681,11 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
 
   if(hardwareTestAvailable_ && !initializeLeapHandTuning(ctl)) { hardwareTestAvailable_ = false; }
   if(rightArmTestAvailable_ && !initializeRightArmTuning(ctl)) { rightArmTestAvailable_ = false; }
+  ringAvailable_ = initializeRingPath(ctl);
+  right_.ringProgressInitialized = false;
+  right_.ringCommandQ.clear();
+  mc_rtc::log::info("[{}] right trigger path: {} (ring {})", name(), ringPathActive() ? "ring" : "linear",
+                    ringStatus_);
 
   ctl.gui()->addElement(
       this, {"Avatar", "Vive"}, mc_rtc::gui::Label("Control state", [this]() { return controlStateName(); }),
@@ -741,6 +833,7 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
     addLeapHandTuningGui(ctl);
     addLeapHandTuningLogs(ctl);
   }
+  if(ringAvailable_) { addRingPathGui(ctl); }
   if(rightArmTestAvailable_)
   {
     addRightArmTuningGui(ctl);
@@ -2775,6 +2868,29 @@ void ViveHandBridge::processHardwareTestRequests(mc_control::fsm::Controller & c
     }
   }
 
+  if(leapRingCandidatesLoadRequested_)
+  {
+    leapRingCandidatesLoadRequested_ = false;
+    if(!ringAvailable_)
+    {
+      hardwareTestStatus_ = "ring A/B/C/D rejected: " + ringStatus_;
+    }
+    else if(!rejectIfDisarmed("LOAD RING ABCD"))
+    {
+      // Same keyframes and direction table as the ring trigger path, so the slow
+      // RViz sequence previews exactly the poses the trigger will command.
+      for(size_t stage = 0; stage < leapCandidateQ_.size(); ++stage)
+      {
+        leapCandidateQ_[stage] = ringModelToCommand(ringKeyframesModel_[stage]);
+      }
+      leapCandidateValid_.fill(true);
+      leapEditorQ_ = leapCandidateQ_[0];
+      leapActiveCandidate_ = "ring A (released-trigger pose)";
+      hardwareTestStatus_ = "loaded ring A/B/C/D; no motion commanded";
+      recordHardwareTestEvent("loaded ring LEAP A/B/C/D candidates");
+    }
+  }
+
   if(leapSequenceStartRequested_)
   {
     leapSequenceStartRequested_ = false;
@@ -2908,6 +3024,7 @@ void ViveHandBridge::disarmHardwareTest(const std::string & reason)
   leapCandidateSaveRequest_ = -1;
   leapCandidateLoadRequest_ = -1;
   leapBuiltinCandidatesLoadRequested_ = false;
+  leapRingCandidatesLoadRequested_ = false;
   leapSequenceStartRequested_ = false;
   hardwareTestArmed_ = false;
   hardwareTestCommandActive_ = false;
@@ -3557,9 +3674,17 @@ void ViveHandBridge::updateGrippers(mc_control::fsm::Controller & ctl)
   {
     if(!hand.hasData || !hand.gripperReady || !hand.gripperCommandActive || !ctl.robot().hasGripper(gripperName))
     {
+      // The next ring activation starts again from the measured hand pose.
+      hand.ringCommandQ.clear();
+      hand.ringProgressInitialized = false;
       return;
     }
     auto & gripper = ctl.robot().gripper(gripperName);
+    if(&hand == &right_ && gripperControlMode_ == "analog_trigger" && ringPathActive())
+    {
+      updateRingGripper(ctl, hand, gripper);
+      return;
+    }
     const double opening = gripperControlMode_ == "analog_trigger" ? analogGripperOpening(hand)
                                                                     : (hand.gripperClosed ? closedValue_ : openValue_);
     gripper.setTargetOpening(opening);
@@ -3722,6 +3847,215 @@ double ViveHandBridge::analogGripperOpening(HandState & hand)
   }
   hand.gripperClosed = normalized >= 0.5;
   return hand.analogOpening;
+}
+
+double ViveHandBridge::analogTriggerProgress(HandState & hand)
+{
+  // Same deadzone and low-pass filter as analogGripperOpening, but expressed as
+  // progress along the closure path: 0 = released (pose A), 1 = fully pulled (pose D).
+  const double raw = std::clamp(static_cast<double>(hand.latest.trigger), 0.0, 1.0);
+  double normalized = 0.0;
+  if(raw >= 1.0 - analogTriggerDeadzone_) { normalized = 1.0; }
+  else if(raw > analogTriggerDeadzone_)
+  {
+    normalized = (raw - analogTriggerDeadzone_) / (1.0 - 2.0 * analogTriggerDeadzone_);
+  }
+  if(!hand.ringProgressInitialized)
+  {
+    hand.ringProgress = normalized;
+    hand.ringProgressInitialized = true;
+  }
+  else
+  {
+    hand.ringProgress += analogTriggerFilterAlpha_ * (normalized - hand.ringProgress);
+  }
+  hand.gripperClosed = normalized >= 0.5;
+  return hand.ringProgress;
+}
+
+bool ViveHandBridge::initializeRingPath(mc_control::fsm::Controller & ctl)
+{
+  if(!ringConfigValid_) { return false; }
+  if(!controlGrippers_ || gripperProfile_ != "leap")
+  {
+    ringStatus_ = "unavailable: only the LEAP variants support the ring path";
+    return false;
+  }
+  if(!right_.gripperReady || !ctl.robot().hasGripper(rightGripper_))
+  {
+    ringStatus_ = "unavailable: right LEAP gripper is not ready";
+    mc_rtc::log::error("[{}] {}", name(), ringStatus_);
+    return false;
+  }
+  const std::vector<std::string> expected = {"R_MCP_1",     "R_PIP_1",     "R_DIP_1",     "R_FINGERTIP_1",
+                                             "R_MCP_2",     "R_PIP_2",     "R_DIP_2",     "R_FINGERTIP_2",
+                                             "R_MCP_3",     "R_PIP_3",     "R_DIP_3",     "R_FINGERTIP_3",
+                                             "R_THUMB_CMC", "R_THUMB_PIP", "R_THUMB_DIP", "R_THUMB_FINGERTIP"};
+  const auto & gripper = ctl.robot().gripper(rightGripper_);
+  if(gripper.activeJoints() != expected)
+  {
+    ringStatus_ = "unavailable: right LEAP joint order does not match the 16-joint ring keyframes";
+    mc_rtc::log::error("[{}] {}", name(), ringStatus_);
+    return false;
+  }
+  ringJointMinimum_.clear();
+  ringJointMaximum_.clear();
+  for(const auto & joint : expected)
+  {
+    const auto index = ctl.robot().jointIndexByName(joint);
+    if(ctl.robot().ql().at(index).empty() || ctl.robot().qu().at(index).empty())
+    {
+      ringStatus_ = "unavailable: robot model has no scalar limit for " + joint;
+      mc_rtc::log::error("[{}] {}", name(), ringStatus_);
+      return false;
+    }
+    ringJointMinimum_.push_back(ctl.robot().ql().at(index).front());
+    ringJointMaximum_.push_back(ctl.robot().qu().at(index).front());
+  }
+  // Report keyframe values that the limits will clip, so a wrong direction table is visible early.
+  for(size_t k = 0; k < ringKeyframesModel_.size(); ++k)
+  {
+    const auto command = ringModelToCommand(ringKeyframesModel_[k]);
+    for(size_t i = 0; i < expected.size(); ++i)
+    {
+      const double unclipped = ringJointSign_[i] * ringKeyframesModel_[k][i] + ringJointOffset_[i];
+      if(std::abs(unclipped - command[i]) > 1e-6)
+      {
+        mc_rtc::log::warning("[{}] ring keyframe {} clips {} from {:.1f} to {:.1f} deg", name(), "ABCD"[k],
+                             expected[i], mc_rtc::constants::toDeg(unclipped),
+                             mc_rtc::constants::toDeg(command[i]));
+      }
+    }
+  }
+  ringStatus_ = ringDirectionVerified_ ? "ready" : "preview only: direction table not verified";
+  return true;
+}
+
+bool ViveHandBridge::ringPathActive() const
+{
+  return ringAvailable_ && ringDirectionVerified_ && leapTriggerPath_ == "ring";
+}
+
+std::vector<double> ViveHandBridge::ringModelTarget(double progress) const
+{
+  const double s = std::clamp(progress, 0.0, 1.0);
+  size_t segment = 0;
+  while(segment + 1 < 3 && s > ringBreakpoints_[segment + 1]) { ++segment; }
+  const double span = ringBreakpoints_[segment + 1] - ringBreakpoints_[segment];
+  const double u = std::clamp((s - ringBreakpoints_[segment]) / span, 0.0, 1.0);
+  const auto & from = ringKeyframesModel_[segment];
+  const auto & to = ringKeyframesModel_[segment + 1];
+  std::vector<double> q(from.size());
+  for(size_t i = 0; i < q.size(); ++i) { q[i] = (1.0 - u) * from[i] + u * to[i]; }
+  return q;
+}
+
+std::vector<double> ViveHandBridge::ringModelToCommand(const std::vector<double> & modelQ) const
+{
+  std::vector<double> q(modelQ.size());
+  for(size_t i = 0; i < q.size(); ++i)
+  {
+    q[i] = std::clamp(ringJointSign_[i] * modelQ[i] + ringJointOffset_[i], ringJointMinimum_[i],
+                      ringJointMaximum_[i]);
+  }
+  return q;
+}
+
+std::string ViveHandBridge::ringSegmentLabel(double progress) const
+{
+  const double s = std::clamp(progress, 0.0, 1.0);
+  if(s <= 0.0) { return "A (released)"; }
+  if(s <= ringBreakpoints_[1]) { return "A -> B (index wraps)"; }
+  if(s <= ringBreakpoints_[2]) { return "B -> C (thumb closes ring)"; }
+  if(s < 1.0) { return "C -> D (support + lock)"; }
+  return "D (fully pulled)";
+}
+
+void ViveHandBridge::updateRingGripper(mc_control::fsm::Controller & ctl,
+                                       HandState & hand,
+                                       mc_control::Gripper & gripper)
+{
+  const auto target = ringModelToCommand(ringModelTarget(analogTriggerProgress(hand)));
+  if(hand.ringCommandQ.size() != target.size())
+  {
+    // Start from the measured pose so that enabling the ring path never jumps.
+    hand.ringCommandQ = gripper.curPosition();
+    if(hand.ringCommandQ.size() != target.size())
+    {
+      mc_rtc::log::error("[{}] ring path disabled: right gripper reports {} joints", name(),
+                         hand.ringCommandQ.size());
+      ringAvailable_ = false;
+      ringStatus_ = "disabled at runtime: wrong right gripper joint count";
+      hand.ringCommandQ.clear();
+      return;
+    }
+  }
+  const double maxStep = ringMaxSpeed_ * ctl.timeStep;
+  for(size_t i = 0; i < target.size(); ++i)
+  {
+    hand.ringCommandQ[i] += std::clamp(target[i] - hand.ringCommandQ[i], -maxStep, maxStep);
+    hand.ringCommandQ[i] = std::clamp(hand.ringCommandQ[i], ringJointMinimum_[i], ringJointMaximum_[i]);
+  }
+  gripper.setTargetQ(hand.ringCommandQ);
+}
+
+void ViveHandBridge::addRingPathGui(mc_control::fsm::Controller & ctl)
+{
+  auto deg = [](const std::vector<double> & q)
+  {
+    std::ostringstream out;
+    out << std::fixed << std::setprecision(0) << "[";
+    for(size_t i = 0; i < q.size(); ++i) { out << (i ? ", " : "") << mc_rtc::constants::toDeg(q[i]); }
+    out << "]";
+    return out.str();
+  };
+  ctl.gui()->addElement(
+      this, {"Avatar", "LEAP Grasp Tuning", "Right Hand", "Ring Trigger Path"},
+      mc_rtc::gui::Label("Meaning",
+                         []()
+                         {
+                           return std::string("Released trigger = A (open C, thumb out). Pulling moves A->B "
+                                              "(index wraps) ->C (thumb closes ring) ->D (others support).");
+                         }),
+      mc_rtc::gui::Label("Ring status", [this]() -> const std::string & { return ringStatus_; }),
+      mc_rtc::gui::Label("Right trigger path", [this]() { return std::string(ringPathActive() ? "ring" : "linear"); }),
+      mc_rtc::gui::Label("Direction table verified", [this]() { return ringDirectionVerified_; }),
+      mc_rtc::gui::Checkbox(
+          "Use ring path for the right trigger", [this]() { return leapTriggerPath_ == "ring"; },
+          [this]()
+          {
+            if(trackingStarted_)
+            {
+              ringStatus_ = "switch rejected while tracking RUNNING; pause first";
+              return;
+            }
+            if(leapTriggerPath_ != "ring" && !ringDirectionVerified_)
+            {
+              ringStatus_ = "switch rejected: set leap_ring.direction_verified after the direction test";
+              return;
+            }
+            leapTriggerPath_ = leapTriggerPath_ == "ring" ? "linear" : "ring";
+            right_.ringCommandQ.clear();
+            right_.ringProgressInitialized = false;
+            ringStatus_ = "ready (right trigger path set to " + leapTriggerPath_ + ")";
+            recordHardwareTestEvent("right trigger path set to " + leapTriggerPath_);
+          }),
+      mc_rtc::gui::Label("Trigger progress [0-1]", [this]() { return right_.ringProgress; }),
+      mc_rtc::gui::Label("Current segment", [this]() { return ringSegmentLabel(right_.ringProgress); }),
+      mc_rtc::gui::Label("Breakpoints", [this]()
+                         {
+                           std::ostringstream out;
+                           out << ringBreakpoints_[0] << " / " << ringBreakpoints_[1] << " / " << ringBreakpoints_[2]
+                               << " / " << ringBreakpoints_[3];
+                           return out.str();
+                         }),
+      mc_rtc::gui::Label("Max joint speed [deg/s]", [this]() { return mc_rtc::constants::toDeg(ringMaxSpeed_); }),
+      mc_rtc::gui::Label("A command [deg]", [this, deg]() { return deg(ringModelToCommand(ringKeyframesModel_[0])); }),
+      mc_rtc::gui::Label("D command [deg]", [this, deg]() { return deg(ringModelToCommand(ringKeyframesModel_[3])); }),
+      mc_rtc::gui::Button("LOAD RING A/B/C/D INTO CANDIDATES (OVERWRITES SLOTS)",
+                          [this]() { leapRingCandidatesLoadRequested_ = true; }));
+  ctl.logger().addLogEntry(name() + "_ring_progress", this, [this]() { return right_.ringProgress; });
+  ctl.logger().addLogEntry(name() + "_ring_active", this, [this]() { return ringPathActive(); });
 }
 
 bool ViveHandBridge::leftEnabled() const

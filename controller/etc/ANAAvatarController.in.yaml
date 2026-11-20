@@ -1169,6 +1169,34 @@ states:
     # Scale only the thumb along the trigger-equivalent built-in A/B/C/D path.
     # 1.0 exactly follows the existing whole-hand rear-trigger mapping.
     leap_builtin_thumb_closure_scale: 1.0
+    # Right LEAP trigger closure path (LEAP variants only; Sake2 ignores it).
+    #   linear: existing whole-hand opening mapping (unchanged behaviour)
+    #   ring:   released trigger = A, pulling follows A -> B -> C -> D below.
+    # Can also be toggled in RViz (Avatar / LEAP Grasp Tuning / Right Hand /
+    # Ring Trigger Path) while tracking is not RUNNING.
+    leap_trigger_path: "linear"
+    leap_ring:
+      # Keyframes in model/URDF convention [deg], designed in
+      # operator_pc/leap_grasp_physics_lab.py ("ring" strategy). Joint order:
+      # MCP_1 PIP_1 DIP_1 FINGERTIP_1  MCP_2 PIP_2 DIP_2 FINGERTIP_2
+      # MCP_3 PIP_3 DIP_3 FINGERTIP_3  THUMB_CMC THUMB_PIP THUMB_DIP THUMB_FINGERTIP
+      # (PIP_k is the sideways abduction joint; THUMB_CMC ~80 deg puts the thumb in the index plane.)
+      A: [20, 0, 10, 5,   20, 0, 10, 5,   20, 0, 10, 5,   80, 0, -30, 0]   # open C, thumb out
+      B: [90, 0, 50, 70,  60, 0, 20, 5,   60, 0, 20, 5,   80, 0, -30, 0]   # index wraps far side
+      C: [90, 0, 50, 70,  60, 0, 20, 5,   60, 0, 20, 5,   85, 0, 60, 60]   # thumb closes the ring
+      D: [100, 0, 60, 75, 95, 0, 55, 35,  95, 0, 55, 35,  85, 0, 60, 60]   # others support + lock
+      # Trigger progress at A, B, C, D (after deadzone and low-pass filter).
+      breakpoints: [0.0, 0.30, 0.65, 1.0]
+      # Extra per-joint speed limit on top of the mc_rtc gripper limit.
+      max_speed_deg_s: 90
+      # Hardware direction table: command = joint_sign * model + joint_offset_deg.
+      # Fill in from docs/LEAP关节方向核对_测试步骤.md before enabling ring on the robot.
+      joint_sign: [1, 1, 1, 1,  1, 1, 1, 1,  1, 1, 1, 1,  1, 1, 1, 1]
+      joint_offset_deg: [0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0]
+      # Safety interlock: the ring path can only drive the trigger after the
+      # direction table above has been checked on the robot. RViz preview of the
+      # ring A/B/C/D candidates (slow, supervised) works without it.
+      direction_verified: false
     right_arm_tuning_apply_duration: 8.0
     # Seven RHPS1 right-arm joints, in the order documented by the RViz panel.
     # Loading this pose only changes the editor; a separate APPLY is required.
