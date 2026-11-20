@@ -130,6 +130,7 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
   config("experiment_condition_required", experimentConditionRequired_);
   config("experiment_rearm_on_command", experimentRearmOnCommand_);
   config("experiment_condition_topic", experimentCommandTopic_);
+  config("experiment_condition_ack_topic", experimentAckTopic_);
   config("control_mode_topic", controlModeTopic_);
   config("experiment_delayed_input_seconds", experimentDelayedInputSeconds_);
   experimentDelayedInputSeconds_ = std::max(0.0, experimentDelayedInputSeconds_);
@@ -520,7 +521,9 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
     auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
     experimentCommandSub_ = node_->create_subscription<std_msgs::msg::String>(
         experimentCommandTopic_, qos, [this](const std_msgs::msg::String::SharedPtr msg) { onExperimentCommand(msg); });
-    mc_rtc::log::info("[{}] Waiting for experiment condition 1-4 on {}", name(), experimentCommandTopic_);
+    experimentAckPub_ = node_->create_publisher<std_msgs::msg::String>(experimentAckTopic_, qos);
+    mc_rtc::log::info("[{}] Waiting for experiment condition 1-4 on {} (acknowledged on {})", name(),
+                      experimentCommandTopic_, experimentAckTopic_);
   }
   if(controlMujocoAdhesion_)
   {
@@ -1133,6 +1136,7 @@ void ViveHandBridge::teardown(mc_control::fsm::Controller & ctl)
   adhesionPub_.reset();
   graspEventPub_.reset();
   experimentCommandSub_.reset();
+  experimentAckPub_.reset();
   controlModeSub_.reset();
   node_.reset();
   if(ownsRclcpp_)
@@ -1428,6 +1432,14 @@ void ViveHandBridge::applyPendingExperimentCommand(mc_control::fsm::Controller &
   ctl.datastore().get<double>(experimentDelayKey_) = inputDelay_;
   ctl.datastore().get<bool>(experimentConditionReadyKey_) = true;
 
+  if(experimentAckPub_)
+  {
+    // "condition;session;delay;assistance" -- consumed by operator_pc/experiment_console.py
+    std_msgs::msg::String ack;
+    ack.data = fmt::format("{};{};{:.2f};{}", experimentCondition_, experimentSessionId_, inputDelay_,
+                           experimentAssistanceEnabled_ ? 1 : 0);
+    experimentAckPub_->publish(ack);
+  }
   mc_rtc::log::success("[{}] Experiment session {}: condition {} ({}), input delay={:.1f}s, assistance={}",
                        name(),
                        experimentSessionId_,

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Experiment condition console for a running *_experiment controller.
+# Start the VIVE talker separately (./run_vive_talker_rhps1); neither needs a restart
+# when the condition changes.
+#   ./run_rhps1_experiment_console            # choose the condition interactively
+#   ./run_rhps1_experiment_console --initial 1
+set -eo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$ROOT_DIR/rhps1_ros_env.sh"
+
+# Prevent two consoles from publishing conflicting conditions to the real robot.
+exec 9>/tmp/ana_rhps1_experiment.lock
+if ! flock -n 9; then
+  echo "Another RHPS1 experiment launcher/console is already running." >&2
+  exit 1
+fi
+
+echo "ROS 2: domain=$ROS_DOMAIN_ID, rmw=$RMW_IMPLEMENTATION"
+exec python3 "$ROOT_DIR/experiment_console.py" "$@"

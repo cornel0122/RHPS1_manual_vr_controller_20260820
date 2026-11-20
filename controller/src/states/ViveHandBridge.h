@@ -320,6 +320,8 @@ private:
   rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr adhesionPub_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr graspEventPub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr experimentCommandSub_;
+  // Acknowledgement of the applied condition, so the Operator PC console can confirm a switch.
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr experimentAckPub_;
   rclcpp::Subscription<std_msgs::msg::String>::SharedPtr controlModeSub_;
 
   std::string leftTaskName_ = "ANA::LeftHandRetargetingTask";
@@ -372,6 +374,7 @@ private:
   int pendingExperimentCondition_ = 0;
   double experimentDelayedInputSeconds_ = 1.5;
   std::string experimentCommandTopic_ = "/ana/experiment_condition";
+  std::string experimentAckTopic_ = "/ana/experiment_condition_ack";
   std::string controlModeTopic_ = "/ana/vive_control_mode";
   std::string pendingControlMode_ = "both";
   bool pendingControlModeCommand_ = false;
