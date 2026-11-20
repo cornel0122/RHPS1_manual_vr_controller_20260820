@@ -76,6 +76,11 @@ private:
     double lastRawReceiveTime = -1.0;
     bool inputStale = false;
     uint64_t rateLimitedCycles = 0;
+    // Target this bridge commanded last cycle. RelativeRetargetting writes its own
+    // (stale) target into the same task every cycle before this bridge runs, so
+    // task->target() must not be used as "the previous command".
+    sva::PTransformd lastCommand = sva::PTransformd::Identity();
+    bool lastCommandValid = false;
     bool rawResetButton = false;
     bool previousReceivedResetButton = false;
     bool resetPressPending = false;
@@ -121,6 +126,8 @@ private:
     double lastValidReceiveTime = -1.0;
     bool inputStale = false;
     uint64_t rateLimitedCycles = 0;
+    sva::PTransformd lastCommand = sva::PTransformd::Identity();
+    bool lastCommandValid = false;
     Eigen::Vector3d zeroPosition = Eigen::Vector3d::Zero();
     Eigen::Matrix3d zeroRotation = Eigen::Matrix3d::Identity();
     sva::PTransformd zeroRobot = sva::PTransformd::Identity();
@@ -256,6 +263,9 @@ private:
   bool initialLeftResetSeen_ = false;
   bool initialRightResetSeen_ = false;
   bool initialWaitingForDataLogged_ = false;
+  // Controller time [s] accumulated from ctl.timeStep. The start/resume handover is
+  // timed with it (not the ROS wall clock) so the blend advances evenly every cycle.
+  double controlTime_ = 0.0;
   double trackingHandoverStartTime_ = -1.0;
   double trackingHandoverDuration_ = 2.0;
   // Input safety layer (<= 0 disables each item).
@@ -264,6 +274,11 @@ private:
   // Maximum speed at which a hand/arm task target may move [m/s, rad/s].
   double targetMaxLinearSpeed_ = 1.5;
   double targetMaxAngularSpeed_ = 4.0;
+  // A cycle counts as "speed-limited" only when the limited target is still this far
+  // behind the requested one; smaller gaps are the normal smoothing of ~90 Hz VIVE
+  // steps inside the 500 Hz control loop and do not mean the operator was slowed down.
+  double rateLimitReportLinear_ = 0.01;
+  double rateLimitReportAngular_ = 0.05;
   // Menu state from messages older than this is ignored [s].
   double rawButtonTimeout_ = 0.5;
   double twoHandPressWindow_ = 0.5;
@@ -476,7 +491,7 @@ private:
   bool ringConfigValid_ = false;
   bool ringDirectionVerified_ = false;
   bool ringAvailable_ = false;
-  std::string ringStatus_ = "not configured";
+  std::string ringStatus_ = "not configured (leap_ring missing)";
   std::array<std::vector<double>, 4> ringKeyframesModel_;
   std::array<double, 4> ringBreakpoints_ = {0.0, 0.30, 0.65, 1.0};
   double ringMaxSpeed_ = 1.5707963267948966; // rad/s (90 deg/s)

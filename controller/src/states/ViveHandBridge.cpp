@@ -189,10 +189,13 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
     mc_rtc::log::warning("[{}] unknown leap_trigger_path '{}'; using linear", name(), leapTriggerPath_);
     leapTriggerPath_ = "linear";
   }
-  ringConfigValid_ = false;
-  ringStatus_ = "not configured (leap_ring missing)";
+  // mc_rtc calls configure() once per configuration layer (base states, the derived
+  // state, Parallel sub-state configs), and most layers do not contain leap_ring.
+  // Only a layer that actually provides leap_ring may change the ring configuration;
+  // otherwise a later layer would silently discard a valid one.
   if(config.has("leap_ring"))
   {
+    ringConfigValid_ = false;
     const auto ring = config("leap_ring");
     constexpr size_t leapJointCount = 16;
     std::string problem;
@@ -256,18 +259,8 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
       mc_rtc::log::error("[{}] {}; the right trigger keeps the linear path", name(), ringStatus_);
     }
   }
-  if(leapTriggerPath_ == "ring" && !ringConfigValid_)
-  {
-    mc_rtc::log::warning("[{}] leap_trigger_path=ring requested but {}; using linear", name(), ringStatus_);
-    leapTriggerPath_ = "linear";
-  }
-  if(leapTriggerPath_ == "ring" && !ringDirectionVerified_)
-  {
-    mc_rtc::log::warning("[{}] leap_trigger_path=ring requested but leap_ring.direction_verified is false; "
-                         "using linear (RViz ring preview stays available)",
-                         name());
-    leapTriggerPath_ = "linear";
-  }
+  // Whether a requested ring path can actually be used is decided in start(),
+  // after every configuration layer has been applied.
   config("right_arm_tuning_apply_duration", rightArmTestApplyDuration_);
   std::vector<double> rightArmDefaultPoseDeg = {-30.0, -20.0, 5.0, -120.0, -20.0, 0.0, 20.0};
   config("right_arm_tuning_pose_deg", rightArmDefaultPoseDeg);
@@ -690,6 +683,14 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
   if(hardwareTestAvailable_ && !initializeLeapHandTuning(ctl)) { hardwareTestAvailable_ = false; }
   if(rightArmTestAvailable_ && !initializeRightArmTuning(ctl)) { rightArmTestAvailable_ = false; }
   ringAvailable_ = initializeRingPath(ctl);
+  if(leapTriggerPath_ == "ring" && !ringPathActive())
+  {
+    mc_rtc::log::warning("[{}] leap_trigger_path=ring requested but {}; using linear (RViz ring preview stays "
+                         "available when the configuration is valid)",
+                         name(),
+                         !ringAvailable_ ? ringStatus_ : std::string("leap_ring.direction_verified is false"));
+    leapTriggerPath_ = "linear";
+  }
   right_.ringProgressInitialized = false;
   right_.ringCommandQ.clear();
   mc_rtc::log::info("[{}] right trigger path: {} (ring {})", name(), ringPathActive() ? "ring" : "linear",
@@ -917,6 +918,7 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
 
 bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
 {
+  controlTime_ += ctl.timeStep;
   rclcpp::spin_some(node_);
   processHardwareTestRequests(ctl);
   processRightArmTestRequests(ctl);
@@ -1222,7 +1224,7 @@ sva::PTransformd ViveHandBridge::rateLimitTarget(const sva::PTransformd & curren
     if(distance > maxStep)
     {
       translation = current.translation() + delta * (maxStep / distance);
-      limited = true;
+      limited = limited || distance - maxStep > rateLimitReportLinear_;
     }
   }
   Eigen::Matrix3d rotation = target.rotation();
@@ -1236,7 +1238,7 @@ sva::PTransformd ViveHandBridge::rateLimitTarget(const sva::PTransformd & curren
     if(angle > maxStep && angle > 1e-9)
     {
       rotation = from.slerp(maxStep / angle, to).normalized().toRotationMatrix();
-      limited = true;
+      limited = limited || angle - maxStep > rateLimitReportAngular_;
     }
   }
   if(limited) { ++limitedCycles; }
@@ -1510,7 +1512,7 @@ bool ViveHandBridge::startOrResumeTracking(mc_control::fsm::Controller & ctl)
   trackingPaused_ = false;
   trackingEverStarted_ = true;
   // 开始/继续时从保持姿态平滑过渡到操作者手位（只影响这一段，不影响之后的连续跟随）。
-  trackingHandoverStartTime_ = trackingHandoverDuration_ > 0.0 ? now() : -1.0;
+  trackingHandoverStartTime_ = trackingHandoverDuration_ > 0.0 ? controlTime_ : -1.0;
   autoZeroDone_ = true;
   zeroRequested_ = false;
   initialWaitingForDataLogged_ = false;
@@ -1518,6 +1520,11 @@ bool ViveHandBridge::startOrResumeTracking(mc_control::fsm::Controller & ctl)
   right_.previousTargetValid = false;
   leftArm_.previousTargetValid = false;
   rightArm_.previousTargetValid = false;
+  // The speed limiter starts from the held pose (zeroRobot) on start/resume.
+  left_.lastCommandValid = false;
+  right_.lastCommandValid = false;
+  leftArm_.lastCommandValid = false;
+  rightArm_.lastCommandValid = false;
   left_.heldTargetVelocity = sva::MotionVecd::Zero();
   right_.heldTargetVelocity = sva::MotionVecd::Zero();
   leftArm_.heldTargetVelocity = sva::MotionVecd::Zero();
@@ -1540,7 +1547,10 @@ void ViveHandBridge::pauseTracking()
   auto captureAndHold = [](auto & state) {
     if(state.task)
     {
-      state.zeroRobot = state.task->target();
+      // 保持本桥最后一次下发的目标。task->target() 在本周期已被 RelativeRetargetting
+      // 写成它自己的旧目标，用它作为保持姿态会让手在暂停时被拉回该旧姿态。
+      state.zeroRobot = state.lastCommandValid ? state.lastCommand : state.task->target();
+      state.lastCommandValid = false;
       state.task->targetVel(sva::MotionVecd::Zero());
     }
     state.previousTargetValid = false;
@@ -2055,7 +2065,7 @@ sva::PTransformd ViveHandBridge::blendFromTrackingHold(const sva::PTransformd & 
   {
     return target;
   }
-  const double rawRatio = (now() - trackingHandoverStartTime_) / trackingHandoverDuration_;
+  const double rawRatio = (controlTime_ - trackingHandoverStartTime_) / trackingHandoverDuration_;
   const double ratio = std::clamp(rawRatio, 0.0, 1.0);
   // 三次平滑步进使接管开始和结束时速度都回到零，避免第一帧产生冲击。
   const double smoothRatio = ratio * ratio * (3.0 - 2.0 * ratio);
@@ -2250,6 +2260,8 @@ void ViveHandBridge::updateHand(mc_control::fsm::Controller & ctl, HandState & h
     }
     if(stale)
     {
+      // 必须每周期显式写入保持目标：RelativeRetargetting 会在本状态之前写入它自己的旧目标。
+      hand.task->target(hand.lastCommandValid ? hand.lastCommand : hand.zeroRobot);
       hand.task->targetVel(sva::MotionVecd::Zero());
       hand.previousTargetValid = false;
       hand.heldTargetVelocity = sva::MotionVecd::Zero();
@@ -2415,7 +2427,10 @@ void ViveHandBridge::updateHand(mc_control::fsm::Controller & ctl, HandState & h
     target = blendFromTrackingHold(hand.zeroRobot, target);
   }
   // 目标限速：VIVE 偶发的位姿跳变变成有限速度的平滑移动；正常手部动作通常不触发。
-  target = rateLimitTarget(hand.task->target(), target, ctl.timeStep, hand.rateLimitedCycles);
+  target = rateLimitTarget(hand.lastCommandValid ? hand.lastCommand : hand.zeroRobot, target, ctl.timeStep,
+                           hand.rateLimitedCycles);
+  hand.lastCommand = target;
+  hand.lastCommandValid = true;
   hand.task->target(target);
   const auto worldVelocity =
       computeTargetVelocity(hand.previousTarget,
@@ -2456,6 +2471,7 @@ void ViveHandBridge::updateArm(mc_control::fsm::Controller & ctl, TrackerState &
     }
     if(stale)
     {
+      tracker.task->target(tracker.lastCommandValid ? tracker.lastCommand : tracker.zeroRobot);
       tracker.task->targetVel(sva::MotionVecd::Zero());
       tracker.previousTargetValid = false;
       tracker.heldTargetVelocity = sva::MotionVecd::Zero();
@@ -2503,7 +2519,10 @@ void ViveHandBridge::updateArm(mc_control::fsm::Controller & ctl, TrackerState &
   {
     target = blendFromTrackingHold(tracker.zeroRobot, target);
   }
-  target = rateLimitTarget(tracker.task->target(), target, ctl.timeStep, tracker.rateLimitedCycles);
+  target = rateLimitTarget(tracker.lastCommandValid ? tracker.lastCommand : tracker.zeroRobot, target, ctl.timeStep,
+                           tracker.rateLimitedCycles);
+  tracker.lastCommand = target;
+  tracker.lastCommandValid = true;
   tracker.task->target(target);
   const auto worldVelocity =
       computeTargetVelocity(tracker.previousTarget,
