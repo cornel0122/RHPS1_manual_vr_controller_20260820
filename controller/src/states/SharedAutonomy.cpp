@@ -16,6 +16,30 @@ void SharedAutonomy::configure(const mc_rtc::Configuration & config)
   config("assist_offset_max_speed", assistOffsetMaxSpeed_);
   config("apply_assistance", applyAssistance_);
   config("shadow_when_assistance_off", shadowWhenAssistanceOff_);
+  if(config.has("goal_offsets"))
+  {
+    // goal_offsets:
+    //   grab_bottle: {right: [x, y, z], left: [x, y, z]}   # per hand
+    //   grab_pitcher: [x, y, z]                             # same for both hands
+    const auto table = config("goal_offsets");
+    goalOffsets_.clear();
+    for(const auto & goal : table.keys())
+    {
+      const auto entry = table(goal);
+      GoalOffset offset;
+      if(entry.isObject())
+      {
+        offset.right = entry("right", Eigen::Vector3d::Zero().eval());
+        offset.left = entry("left", Eigen::Vector3d::Zero().eval());
+      }
+      else
+      {
+        offset.right = entry;
+        offset.left = offset.right;
+      }
+      goalOffsets_[goal] = offset;
+    }
+  }
   assistOffsetMaxSpeed_ = std::max(0.0, assistOffsetMaxSpeed_);
   config("overwritten_Task", overwritten_Task);
   config("translationStiffness", stiffness_);
@@ -572,96 +596,12 @@ bool SharedAutonomy::run(mc_control::fsm::Controller & ctl)
     // 让夹口从侧面接近，其伸出方向与容器的竖直长轴垂直。
     Eigen::Vector3d newTargetOrientationDown = targetOrientationDown;
     auto & currentGoalName = currentGoalNameLog_;
-    if(currentGoalName.compare("grab_potato1") == 0)
+    // Per-goal grasp offsets [m] in the robot world frame, from goal_offsets in the YAML.
+    const auto goalOffset = goalOffsets_.find(currentGoalName);
+    if(goalOffset != goalOffsets_.end())
     {
-      if(type_.compare("r") == 0)
-      {
-        targetPosition[0] -= 0.02;
-        targetPosition[1] -= 0.02;
-        //targetPosition[2] += 0.04;
-      }
-      else
-      {
-        targetPosition[0] -= 0.02;
-        //targetPosition[1] += 0.05;
-        //targetPosition[2] += 0.04;
-      }
+      targetPosition += type_.compare("r") == 0 ? goalOffset->second.right : goalOffset->second.left;
     }
-    else if(currentGoalName.compare("grab_bottle") == 0)
-    {
-      if(type_.compare("r") == 0)
-      {
-        targetPosition[0] -= 0.03;
-        targetPosition[1] += 0.02;
-        //targetPosition[2] += 0.08;
-      }
-      else
-      {
-        targetPosition[0] -= 0.03;
-        targetPosition[1] -= 0.02;
-        //targetPosition[2] += 0.08;
-      }
-    }
-    else if(currentGoalName.compare("grab_pitcher") == 0)
-    {
-      targetPosition[0] -= 0.1;
-      //targetPosition[1] += 0.03;
-      //targetPosition[2] += 0.01;
-    }
-    else if(currentGoalName.compare("grab_salt") == 0)
-    {
-      if(type_.compare("r") == 0)
-      {
-        targetPosition[0] -= 0.03;
-        targetPosition[1] -= 0.02;
-        //targetPosition[2] += 0.08;
-      }
-      else
-      {
-        targetPosition[0] -= 0.03;
-        //targetPosition[1] += 0.12;
-        //targetPosition[2] += 0.08;
-      }
-    }
-    else if(currentGoalName.compare("grab_sauce") == 0)
-    {
-      targetPosition[0] -= 0.03;
-      targetPosition[1] -= 0.02;
-      //targetPosition[2] += 0.04;
-    }
-    /*else if(currentGoalName.compare("pour_salt") == 0)
-    {
-      targetPosition[0] -= 0.08;
-      targetPosition[1] -= 0.15;
-      targetPosition[2] += 0.085;
-    }
-    else if(currentGoalName.compare("pour_sauce") == 0)
-    {
-      targetPosition[0] -= 0.08;
-      targetPosition[1] -= 0.15;
-      targetPosition[2] += 0.085;
-    }
-    else if(currentGoalName.compare("pour_pitcher") == 0)
-    {
-      targetPosition[0] -= 0.06;
-      targetPosition[1] += 0.15;
-      targetPosition[2] += 0.15;
-    }
-    else if(currentGoalName.compare("pour_bottle") == 0)
-    {
-      if(type_.compare("r") == 0)
-      {
-        targetPosition[0] -= 0.02;
-        targetPosition[1] -= 0.03;
-        targetPosition[2] += 0.2;
-      }
-      else
-      {
-        targetPosition[0] -= 0.06;
-        targetPosition[1] += 0.15;
-        targetPosition[2] += 0.15;
-      }
-    }*/
     if(!singleTargetBlending_)
     {
       hand_taskTranslation->target(sva::PTransformd(targetPosition));

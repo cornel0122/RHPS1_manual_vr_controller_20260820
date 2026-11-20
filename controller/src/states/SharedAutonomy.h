@@ -52,6 +52,20 @@ private:
   //  - apply_assistance=false: shadow even in conditions with assistance (first robot trials).
   //  - shadow_when_assistance_off=true: conditions without assistance still log what the
   //    assistance would have done, for offline comparison.
+  // Grasp offset added to the goal position, per goal name and hand [m, robot world frame].
+  // Defaults reproduce the previously hard-coded MuJoCo kitchen values; the YAML key
+  // goal_offsets replaces the whole table when present.
+  struct GoalOffset
+  {
+    Eigen::Vector3d right = Eigen::Vector3d::Zero();
+    Eigen::Vector3d left = Eigen::Vector3d::Zero();
+  };
+  std::unordered_map<std::string, GoalOffset> goalOffsets_ = {
+      {"grab_potato1", {Eigen::Vector3d(-0.02, -0.02, 0.0), Eigen::Vector3d(-0.02, 0.0, 0.0)}},
+      {"grab_bottle", {Eigen::Vector3d(-0.03, 0.02, 0.0), Eigen::Vector3d(-0.03, -0.02, 0.0)}},
+      {"grab_pitcher", {Eigen::Vector3d(-0.10, 0.0, 0.0), Eigen::Vector3d(-0.10, 0.0, 0.0)}},
+      {"grab_salt", {Eigen::Vector3d(-0.03, -0.02, 0.0), Eigen::Vector3d(-0.03, 0.0, 0.0)}},
+      {"grab_sauce", {Eigen::Vector3d(-0.03, -0.02, 0.0), Eigen::Vector3d(-0.03, -0.02, 0.0)}}};
   bool applyAssistance_ = true;
   bool shadowWhenAssistanceOff_ = true;
   bool shadow_ = false;

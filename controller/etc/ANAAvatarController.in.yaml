@@ -496,6 +496,15 @@ states:
     #   shadow_when_assistance_off: true   -> 无辅助条件(1/3)也记录“如果辅助会怎样”，供离线对比
     apply_assistance: true
     shadow_when_assistance_off: true
+    # 各目标的抓取偏移 [m]，机器人世界坐标（x 前、y 左、z 上），加到识别出的物体位置上。
+    # 写了这个表就整体替换代码里的默认值；换成真实物体时只需改这里（物体还需加入
+    # ANA::IntentRecognitionBridge 的 assistance_object_allowlist）。当前数值沿用 MuJoCo 厨房场景。
+    goal_offsets:
+      grab_potato1: {right: [-0.02, -0.02, 0.0], left: [-0.02, 0.00, 0.0]}
+      grab_bottle:  {right: [-0.03,  0.02, 0.0], left: [-0.03, -0.02, 0.0]}
+      grab_pitcher: [-0.10, 0.00, 0.0]
+      grab_salt:    {right: [-0.03, -0.02, 0.0], left: [-0.03, 0.00, 0.0]}
+      grab_sauce:   [-0.03, -0.02, 0.0]
     overwritten_Task: "ANA::LeftHandRetargeting"
     translationStiffness: 0.25
     orientationStiffness: 3
