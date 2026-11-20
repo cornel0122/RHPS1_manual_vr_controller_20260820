@@ -46,6 +46,7 @@ void IntentRecognitionBridge::configure(const mc_rtc::Configuration & config)
   config("default_hand", defaultHand_);
   config("confidence_threshold", confidenceThreshold_);
   config("alpha_cap", alphaCap_);
+  config("intent_timeout", intentTimeout_);
   config("position_scale", positionScale_);
   config("left_hand_task", leftTaskKey_);
   config("right_hand_task", rightTaskKey_);
@@ -171,6 +172,7 @@ void IntentRecognitionBridge::start(mc_control::fsm::Controller & ctl)
   ctl.logger().addLogEntry(logPrefix + "write-assistance-datastore", this,
                            [this]() { return writeAssistanceDatastore_; });
   ctl.logger().addLogEntry(logPrefix + "has-packet", this, [this]() { return hasPacket_; });
+  ctl.logger().addLogEntry(logPrefix + "intent-stale", this, [this]() { return intentStale_; });
   ctl.logger().addLogEntry(logPrefix + "frame-safe", this, [this]() { return packetFrameSafe_; });
   ctl.logger().addLogEntry(logPrefix + "assistance-data-ready", this,
                            [this]() { return assistanceDataReady_; });
@@ -258,6 +260,34 @@ bool IntentRecognitionBridge::run(mc_control::fsm::Controller & ctl)
     return true;
   }
 
+  {
+    const double age = node_ ? node_->now().seconds() - lastPacketTime_ : 0.0;
+    const bool stale = intentTimeout_ > 0.0 && (lastPacketTime_ < 0.0 || age > intentTimeout_);
+    if(stale != intentStale_)
+    {
+      intentStale_ = stale;
+      if(stale)
+      {
+        mc_rtc::log::warning("[{}] 意图消息已超过 {:.2f}s 未更新：辅助 alpha 置 0，直到收到新消息", name(),
+                             intentTimeout_);
+      }
+      else { mc_rtc::log::info("[{}] 意图消息恢复", name()); }
+    }
+    if(stale)
+    {
+      // Keep the goal lists for display but remove any authority from them.
+      for(const auto & key : {"goalPredictionAlpha", "goalPredictionAlphaLeft", "goalPredictionAlphaRight"})
+      {
+        if(ctl.datastore().has(key)) { ctl.datastore().get<double>(key) = 0.0; }
+      }
+      assistanceDataReady_ = false;
+      currentAlpha_ = 0.0;
+      status_ = fmt::format("STALE: no intent for {:.1f} s (alpha forced to 0)", age);
+      output("OK");
+      return true;
+    }
+  }
+
   latestPacket_ = mergedExternalPacket();
 
   packetFrameSafe_ = frameIsSafe(ctl, latestPacket_);
@@ -342,6 +372,7 @@ void IntentRecognitionBridge::onExternalIntent(const std_msgs::msg::String::Shar
     hasRightPacket_ = true;
   }
   hasPacket_ = true;
+  lastPacketTime_ = node_ ? node_->now().seconds() : -1.0;
 }
 
 IntentRecognitionBridge::IntentPacket IntentRecognitionBridge::mergedExternalPacket() const

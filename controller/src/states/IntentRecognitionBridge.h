@@ -111,6 +111,12 @@ private:
 
   double confidenceThreshold_ = 0.2;
   double alphaCap_ = 0.75;
+  // Intent freshness: when no intent message arrived for intent_timeout [s], the
+  // assistance alpha is forced to 0 so a crashed or disconnected recogniser can never
+  // keep driving the robot with its last goal. <= 0 disables the check.
+  double intentTimeout_ = 0.5;
+  double lastPacketTime_ = -1.0;
+  bool intentStale_ = false;
   double positionScale_ = 1.0;
   Eigen::Matrix3d sourceToRobotRotation_ = Eigen::Matrix3d::Identity();
   Eigen::Vector3d sourceToRobotTranslation_ = Eigen::Vector3d::Zero();

@@ -25,6 +25,28 @@ private:
   bool enabled_ = true;
   bool useExperimentAssistanceGate_ = false;
   bool experimentGateOpen_ = false;
+  // Single-target blending (default): the assistance is a rate-limited position offset
+  // alpha * (goal - operator target) added to the operator's own hand target, so the hand
+  // keeps one task and the arm never jumps when alpha or the goal changes.
+  // false = legacy dual weighted QP tasks.
+  bool singleTargetBlending_ = true;
+  double assistOffsetMaxSpeed_ = 0.3; // [m/s]
+  Eigen::Vector3d assistOffset_ = Eigen::Vector3d::Zero();
+  Eigen::Vector3d humanTargetPosition_ = Eigen::Vector3d::Zero();
+  Eigen::Vector3d blendedTargetPosition_ = Eigen::Vector3d::Zero();
+  // The operator target is read from the hand task. If no other state rewrote the task
+  // since this state last wrote the blended target, reuse the remembered operator target
+  // instead of treating the blended one as operator input (which would accumulate).
+  sva::PTransformd humanTarget_ = sva::PTransformd::Identity();
+  sva::PTransformd lastHumanTarget_ = sva::PTransformd::Identity();
+  sva::PTransformd lastWrittenTarget_ = sva::PTransformd::Identity();
+  bool lastWrittenValid_ = false;
+  // Human-readable assistance state for the GUI/log; every change is logged so that a
+  // condition with assistance never silently runs as manual teleoperation.
+  std::string assistanceStatus_ = "starting";
+  void setAssistanceStatus(const std::string & status, bool problem);
+  void readHumanTarget(mc_control::fsm::Controller & ctl);
+  void applyAssistOffset(mc_control::fsm::Controller & ctl, const Eigen::Vector3d & desiredOffset);
   std::string experimentAssistanceKey_ = "ANA::Experiment::assistance_enabled";
   bool warnedMissingData_ = false;
   double alpha;

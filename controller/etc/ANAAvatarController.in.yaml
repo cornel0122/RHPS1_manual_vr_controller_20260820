@@ -485,6 +485,11 @@ states:
   ANA::SharedAutonomyLeftHand:
     base: SharedAutonomy
     enabled: true
+    # 单目标融合：辅助量作为限速的位置偏移 alpha*(目标-操作者) 叠加到操作者的手部目标上，
+    # 手只有一个任务；alpha 或目标物体突变时手臂不会跳。false = 旧的双任务按权重竞争。
+    single_target_blending: true
+    # 辅助偏移的最大变化速度 [m/s]，辅助开始和撤销都受此限制。
+    assist_offset_max_speed: 0.3
     overwritten_Task: "ANA::LeftHandRetargeting"
     translationStiffness: 0.25
     orientationStiffness: 3
