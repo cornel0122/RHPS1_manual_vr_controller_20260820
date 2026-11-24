@@ -18,18 +18,20 @@
 
 RViz：`Avatar / LEAP Grasp Tuning / Right Hand`
 - 按钮在 `Right Hand` 主页面
-- 关节滑条在 `Finger 1`、`Thumb` 等子页面，每个关节有 `actual [deg]`（实测）和 `target [deg]`（目标）
+- 关节滑条在 `Finger 1`、`Thumb` 等子页面，每个关节有 `command [deg]`（当前命令）、`encoder [deg]`（编码器实测）和 `target [deg]`（目标）
+  - 2026-11-24 之前的版本只有 `actual [deg]`，**它其实是命令值，不是实测**（测试时会全为 0）。
+  - 主页面 `Encoder readings` 显示编码器读数是否可用；不可用时 `encoder [deg]` 为 NaN。
 
 ## 步骤
 
 1. `Slow apply duration [s]` 设为 **5**。
 2. 点 `ARM RIGHT HAND EDITOR`，确认 `Armed = true`。
 3. 点 `CAPTURE ACTUAL INTO EDITOR`（编辑器 = 当前实际姿势）。
-4. 截图记录 16 个关节的 `actual [deg]`（基准）。
+4. 截图记录 16 个关节的 `command [deg]` 和 `encoder [deg]`（基准）。
 5. 按下表顺序，每个关节做一次：
    1. 把该关节 `target [deg]` 设为 **基准 + 15°**（超出范围就用 基准 − 15°，并在表里注明）。
    2. 点 `APPLY EDITOR SLOWLY`，观察**真机手指**和 **RViz 模型**各往哪个方向动。
-   3. 记下动作后的 `actual [deg]`。
+   3. 记下动作后的 `encoder [deg]`（编码器实测）。
    4. 点 `RESTORE CAPTURED TO EDITOR`，再点 `APPLY EDITOR SLOWLY`，回到基准。
 6. 全部做完点 `DISARM AND HOLD`。
 
@@ -39,7 +41,7 @@ RViz：`Avatar / LEAP Grasp Tuning / Right Hand`
 
 模型含义：“+” 表示 URDF 正方向在模型里的动作（由 MuJoCo 正向运动学测得）。
 
-| 关节 | 模型里 “+” 的含义 | RViz 模型实际动作 | 真机实际动作 | 动作后 actual [deg] |
+| 关节 | 模型里 “+” 的含义 | RViz 模型实际动作 | 真机实际动作 | 动作后 encoder [deg] |
 |---|---|---|---|---|
 | `R_MCP_1` | 食指根部弯曲 | | | |
 | `R_PIP_1` | 食指向远离拇指方向摆（外展） | | | |
@@ -58,7 +60,7 @@ RViz：`Avatar / LEAP Grasp Tuning / Right Hand`
 | RViz 与真机方向**相反** | 插件或硬件映射与模型相反 | 修正映射需负责插件的人；ring/ABCD 关节值需按实测关系换算 |
 | RViz 与真机方向**一致**，且 “+” = 弯曲 | 模型正确，问题在 trigger→opening 映射 | 在 controller 配置中处理 open/closed 方向（本仓库可改） |
 | 只有部分关节相反 | 个别关节标定或映射问题 | 逐个记录，换算时逐关节处理 |
-| `actual` 不跟随 `target` | 反馈或控制异常 | 停止测试，检查插件与日志 |
+| `encoder` 不跟随 `target` | 反馈或控制异常（或插件不回传该关节编码器） | 停止测试，检查插件与日志 |
 
 ---
 
@@ -82,10 +84,17 @@ ninja install
 把第一部分的结果告诉 Claude，由其修改
 `controller/etc/ANAAvatarController.in.yaml` 中 `leap_ring` 的：
 
+- `joint_map`：16 个整数，第 i 个位置（发给电机的槽位）取模型的第几个关节（0–15 的排列；默认不对调）
 - `joint_sign`：16 个 +1 / −1
 - `joint_offset_deg`：16 个偏移（只有“范围内镜像”这类情况才需要）
 
-规则：`真机命令 = joint_sign × 模型角度 + joint_offset_deg`。
+规则：`第 i 槽位命令 = joint_sign[i] × 模型角度[joint_map[i]] + joint_offset_deg[i]`。
+
+**2026-11-24 测试结果给出的建议值**（已写在 `ANAAvatarController.in.yaml` 的注释里）：
+四指 `MCP_k` 与 `PIP_k` 对调（`joint_map: [1,0,2,3, 5,4,6,7, 9,8,10,11, 12,13,14,15]`），全部 `joint_sign: -1`。
+`joint_offset_deg` 尚未测得：用 `encoder [deg]` 在命令 0 和几个已知姿态下读数标定，或先阅读 LEAPHandPlugin 源码。
+注意：槽位命令仍按该槽位关节的 URDF 范围钳位（mc_rtc Gripper），偏移选错会让部分姿态被截断，
+`Ring Trigger Path` 页面和日志会提示被截断的关节。
 提交推送后，按第 0 步重新拉取安装。此时仍保持 `direction_verified: false`。
 
 ## 2. RViz 慢速预览 ring 四个姿态（不需要 VIVE）

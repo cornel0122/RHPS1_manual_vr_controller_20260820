@@ -7,6 +7,7 @@
 #include <mc_rtc/logging.h>
 
 #include <algorithm>
+#include <limits>
 #include <cctype>
 #include <cmath>
 #include <iomanip>
@@ -232,6 +233,9 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
     ringMaxSpeed_ = mc_rtc::constants::toRad(std::clamp(maxSpeedDeg, 5.0, 180.0));
     std::vector<double> sign(leapJointCount, 1.0);
     std::vector<double> offsetDeg(leapJointCount, 0.0);
+    std::vector<int> jointMap(leapJointCount);
+    for(size_t i = 0; i < leapJointCount; ++i) { jointMap[i] = static_cast<int>(i); }
+    ring("joint_map", jointMap);
     ring("joint_sign", sign);
     ring("joint_offset_deg", offsetDeg);
     ring("direction_verified", ringDirectionVerified_);
@@ -248,6 +252,20 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
     }
     if(problem.empty())
     {
+      // joint_map must be a permutation of 0..15: every model joint drives exactly one slot.
+      std::vector<int> sorted = jointMap;
+      std::sort(sorted.begin(), sorted.end());
+      for(size_t i = 0; i < leapJointCount && problem.empty(); ++i)
+      {
+        if(sorted.size() != leapJointCount || sorted[i] != static_cast<int>(i))
+        {
+          problem = "joint_map must be a permutation of 0..15";
+        }
+      }
+    }
+    if(problem.empty())
+    {
+      ringJointMap_.assign(jointMap.begin(), jointMap.end());
       ringJointSign_ = sign;
       ringJointOffset_.clear();
       for(const double value : offsetDeg) { ringJointOffset_.push_back(mc_rtc::constants::toRad(value)); }
@@ -2894,6 +2912,28 @@ void ViveHandBridge::processHardwareTestRequests(mc_control::fsm::Controller & c
   {
     const auto actual = gripper.curPosition();
     if(actual.size() == leapActualQ_.size()) { leapActualQ_ = actual; }
+    // Real measurement for the operator: without robot encoders Gripper::actualQ silently equals the
+    // command, so report NaN instead of pretending to measure.
+    // Same source as mc_rtc's Gripper::actualQ (protected): the encoder value at the joint's refJointOrder index.
+    const auto & encoders = ctl.robot().encoderValues();
+    if(leapEncoderIndex_.size() != leapJointNames_.size())
+    {
+      const auto & order = ctl.robot().refJointOrder();
+      leapEncoderIndex_.clear();
+      for(const auto & joint : leapJointNames_)
+      {
+        const auto it = std::find(order.begin(), order.end(), joint);
+        leapEncoderIndex_.push_back(it == order.end() ? -1 : static_cast<int>(std::distance(order.begin(), it)));
+      }
+    }
+    leapEncoderQ_.assign(leapJointNames_.size(), std::numeric_limits<double>::quiet_NaN());
+    leapEncoderAvailable_ = !encoders.empty();
+    for(size_t i = 0; i < leapJointNames_.size(); ++i)
+    {
+      const int idx = leapEncoderIndex_[i];
+      if(idx >= 0 && static_cast<size_t>(idx) < encoders.size()) { leapEncoderQ_[i] = encoders[static_cast<size_t>(idx)]; }
+      else { leapEncoderAvailable_ = false; }
+    }
   }
 
   if(hardwareTestDisarmRequested_)
@@ -3336,6 +3376,10 @@ void ViveHandBridge::addLeapHandTuningGui(mc_control::fsm::Controller & ctl)
       mc_rtc::gui::Label("Last event", [this]() -> const std::string & { return hardwareTestLastEvent_; }),
       mc_rtc::gui::Label("Event sequence", [this]() { return std::to_string(hardwareTestEventSequence_); }),
       mc_rtc::gui::Label("Armed", [this]() { return hardwareTestArmed_; }),
+      mc_rtc::gui::Label("Encoder readings", [this]() {
+        return std::string(leapEncoderAvailable_ ? "available (joint pages: 'encoder [deg]')"
+                                                 : "NOT available - 'encoder [deg]' shows NaN");
+      }),
       mc_rtc::gui::Label("Applying", [this]() { return hardwareTestApplying_; }),
       mc_rtc::gui::Label("Apply progress", [this]() { return hardwareTestApplyProgress_; }),
       mc_rtc::gui::Label("Editor source", [this]() -> const std::string & { return leapActiveCandidate_; }),
@@ -3428,8 +3472,13 @@ void ViveHandBridge::addLeapHandTuningGui(mc_control::fsm::Controller & ctl)
       const std::string & joint = leapJointNames_[index];
       ctl.gui()->addElement(
           this, category,
-          mc_rtc::gui::Label(joint + " actual [deg]",
+          mc_rtc::gui::Label(joint + " command [deg]",
                              [this, index]() { return mc_rtc::constants::toDeg(leapActualQ_.at(index)); }),
+          mc_rtc::gui::Label(joint + " encoder [deg]",
+                             [this, index]() {
+                               return index < leapEncoderQ_.size() ? mc_rtc::constants::toDeg(leapEncoderQ_[index])
+                                                                   : std::numeric_limits<double>::quiet_NaN();
+                             }),
           mc_rtc::gui::NumberSlider(
               joint + " target [deg]", [this, index]() { return mc_rtc::constants::toDeg(leapEditorQ_.at(index)); },
               [this, index](double value)
@@ -3478,7 +3527,11 @@ void ViveHandBridge::addLeapHandTuningLogs(mc_control::fsm::Controller & ctl)
   for(size_t index = 0; index < leapJointNames_.size(); ++index)
   {
     const std::string key = prefix + leapJointNames_[index];
+    // "-actual-rad" is kept for log compatibility; it is the gripper command, not a measurement.
     ctl.logger().addLogEntry(key + "-actual-rad", this, [this, index]() { return leapActualQ_[index]; });
+    ctl.logger().addLogEntry(key + "-encoder-rad", this, [this, index]() {
+      return index < leapEncoderQ_.size() ? leapEncoderQ_[index] : std::numeric_limits<double>::quiet_NaN();
+    });
     ctl.logger().addLogEntry(key + "-editor-rad", this, [this, index]() { return leapEditorQ_[index]; });
     ctl.logger().addLogEntry(key + "-command-rad", this, [this, index]() { return leapCommandQ_[index]; });
   }
@@ -4138,7 +4191,7 @@ bool ViveHandBridge::initializeRingPath(mc_control::fsm::Controller & ctl)
     const auto command = ringModelToCommand(ringKeyframesModel_[k]);
     for(size_t i = 0; i < expected.size(); ++i)
     {
-      const double unclipped = ringJointSign_[i] * ringKeyframesModel_[k][i] + ringJointOffset_[i];
+      const double unclipped = ringJointSign_[i] * ringKeyframesModel_[k][ringJointMap_[i]] + ringJointOffset_[i];
       if(std::abs(unclipped - command[i]) > 1e-6)
       {
         mc_rtc::log::warning("[{}] ring keyframe {} clips {} from {:.1f} to {:.1f} deg", name(), "ABCD"[k],
@@ -4175,7 +4228,7 @@ std::vector<double> ViveHandBridge::ringModelToCommand(const std::vector<double>
   std::vector<double> q(modelQ.size());
   for(size_t i = 0; i < q.size(); ++i)
   {
-    q[i] = std::clamp(ringJointSign_[i] * modelQ[i] + ringJointOffset_[i], ringJointMinimum_[i],
+    q[i] = std::clamp(ringJointSign_[i] * modelQ[ringJointMap_[i]] + ringJointOffset_[i], ringJointMinimum_[i],
                       ringJointMaximum_[i]);
   }
   return q;
@@ -4240,6 +4293,11 @@ void ViveHandBridge::addRingPathGui(mc_control::fsm::Controller & ctl)
       mc_rtc::gui::Label("Ring status", [this]() -> const std::string & { return ringStatus_; }),
       mc_rtc::gui::Label("Right trigger path", [this]() { return std::string(ringPathActive() ? "ring" : "linear"); }),
       mc_rtc::gui::Label("Direction table verified", [this]() { return ringDirectionVerified_; }),
+      mc_rtc::gui::Label("Joint map (slot <- model joint)", [this]() {
+        std::string out;
+        for(size_t i = 0; i < ringJointMap_.size(); ++i) { out += (i ? " " : "") + std::to_string(ringJointMap_[i]); }
+        return out;
+      }),
       mc_rtc::gui::Checkbox(
           "Use ring path for the right trigger", [this]() { return leapTriggerPath_ == "ring"; },
           [this]()

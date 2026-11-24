@@ -470,7 +470,12 @@ private:
   std::vector<std::string> leapJointNames_;
   std::vector<double> leapJointMinimum_;
   std::vector<double> leapJointMaximum_;
+  // NOTE: despite the name this is Gripper::curPosition(), i.e. the gripper's *commanded* position.
   std::vector<double> leapActualQ_;
+  // Gripper::actualQ, filled by mc_rtc from the robot encoders (NaN when the robot provides none).
+  std::vector<double> leapEncoderQ_;
+  bool leapEncoderAvailable_ = false;
+  std::vector<int> leapEncoderIndex_; // index of each LEAP joint in refJointOrder (-1: not found)
   std::vector<double> leapEditorQ_;
   std::vector<double> leapCapturedQ_;
   std::vector<double> leapCommandQ_;
@@ -505,6 +510,10 @@ private:
   std::array<std::vector<double>, 4> ringKeyframesModel_;
   std::array<double, 4> ringBreakpoints_ = {0.0, 0.30, 0.65, 1.0};
   double ringMaxSpeed_ = 1.5707963267948966; // rad/s (90 deg/s)
+  // Hardware slot i receives sign[i] * model[map[i]] + offset[i] (map = identity by default).
+  // On RHPS1 the LEAP plugin sends the joints in model chain order, while the LEAP motor numbering is
+  // side-swing first, so the MCP_k / PIP_k slots are swapped (2026-11-24 joint test + URDF check).
+  std::vector<size_t> ringJointMap_ = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15};
   std::vector<double> ringJointSign_;
   std::vector<double> ringJointOffset_;
   std::vector<double> ringJointMinimum_;
