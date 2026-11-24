@@ -330,6 +330,12 @@ states:
     target_max_angular_speed: 4.0  # [rad/s]
     # 超过该时间未收到任何手柄消息时，menu 按键视为未按下 [s]。
     raw_button_timeout: 0.5
+    # 手部 / 大臂跟随任务的刚度（每周期重设；<= 0 表示保持旧行为）。
+    # 旧行为下 VIVE 路径的刚度一直是 RelativeRetargetting/OrientationRetargetting 的最小值 5，
+    # 2026-11-24 真机日志：手比目标滞后约 0.3 s、移动时平均落后约 12 cm。设计值为 maxStiffness 50。
+    # 可在 RViz Avatar/Vive 实时调整；目标限速（target_max_*_speed）仍然生效。
+    hand_task_stiffness: 50
+    arm_task_stiffness: 50
     direct_waist_max_distance: 1.2
     robot_waist_frame: "BODY"
     left_hand_orientation_offset_rpy_deg: [0.0, 0.0, 0.0]

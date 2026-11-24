@@ -327,6 +327,8 @@ void ViveHandBridge::configure(const mc_rtc::Configuration & config)
   config("target_max_linear_speed", targetMaxLinearSpeed_);
   config("target_max_angular_speed", targetMaxAngularSpeed_);
   config("raw_button_timeout", rawButtonTimeout_);
+  config("hand_task_stiffness", handTaskStiffness_);
+  config("arm_task_stiffness", armTaskStiffness_);
   mc_rtc::log::info("[{}] input safety: stale timeout {:.2f} s, target speed limit {:.2f} m/s / {:.2f} rad/s, "
                     "handover {:.2f} s (<= 0 disables)",
                     name(), inputStaleTimeout_, targetMaxLinearSpeed_, targetMaxAngularSpeed_,
@@ -770,7 +772,13 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
       mc_rtc::gui::NumberInput(
           "Max hand step [m]", [this]() { return maxStep_; }, [this](double s) { maxStep_ = std::max(0.05, s); }),
       mc_rtc::gui::NumberInput(
-          "Input delay [s]", [this]() { return inputDelay_; }, [this](double d) { inputDelay_ = std::max(0.0, d); }));
+          "Input delay [s]", [this]() { return inputDelay_; }, [this](double d) { inputDelay_ = std::max(0.0, d); }),
+      mc_rtc::gui::NumberInput(
+          "Hand task stiffness (<=0: legacy 5)", [this]() { return handTaskStiffness_; },
+          [this](double k) { handTaskStiffness_ = std::min(k, 200.0); }),
+      mc_rtc::gui::NumberInput(
+          "Arm task stiffness (<=0: legacy 5)", [this]() { return armTaskStiffness_; },
+          [this](double k) { armTaskStiffness_ = std::min(k, 200.0); }));
 
   // This panel is disabled in every production configuration. A MuJoCo-only
   // overlay can enable it to identify a fixed hand-frame offset without
@@ -910,6 +918,8 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
                            [this]() { return static_cast<double>(leftArm_.rateLimitedCycles); });
   ctl.logger().addLogEntry(safetyLogPrefix + "right-arm-limited-cycles", this,
                            [this]() { return static_cast<double>(rightArm_.rateLimitedCycles); });
+  ctl.logger().addLogEntry(name() + "_hand-task-stiffness", this, [this]() { return handTaskStiffness_; });
+  ctl.logger().addLogEntry(name() + "_arm-task-stiffness", this, [this]() { return armTaskStiffness_; });
 
   setupVelocityValidation(ctl);
 
@@ -922,6 +932,9 @@ void ViveHandBridge::start(mc_control::fsm::Controller & ctl)
 bool ViveHandBridge::run(mc_control::fsm::Controller & ctl)
 {
   controlTime_ += ctl.timeStep;
+  // Must run every cycle: the retargeting states that own these tasks run before this bridge and
+  // reset the stiffness to their minimum each cycle.
+  applyTaskStiffness();
   rclcpp::spin_some(node_);
   processHardwareTestRequests(ctl);
   processRightArmTestRequests(ctl);
@@ -1199,6 +1212,21 @@ void ViveHandBridge::updateRawButtons(HandState & hand, const Controller & msg)
 bool ViveHandBridge::rawButtonsFresh(const HandState & hand) const
 {
   return hand.lastRawReceiveTime >= 0.0 && (rawButtonTimeout_ <= 0.0 || now() - hand.lastRawReceiveTime <= rawButtonTimeout_);
+}
+
+void ViveHandBridge::applyTaskStiffness()
+{
+  // TransformTask::stiffness() also sets critical damping (2 * sqrt(k)).
+  if(handTaskStiffness_ > 0.0)
+  {
+    if(left_.task) { left_.task->stiffness(handTaskStiffness_); }
+    if(right_.task) { right_.task->stiffness(handTaskStiffness_); }
+  }
+  if(armTaskStiffness_ > 0.0)
+  {
+    if(leftArm_.task) { leftArm_.task->stiffness(armTaskStiffness_); }
+    if(rightArm_.task) { rightArm_.task->stiffness(armTaskStiffness_); }
+  }
 }
 
 bool ViveHandBridge::inputIsStale(double lastValidReceiveTime) const

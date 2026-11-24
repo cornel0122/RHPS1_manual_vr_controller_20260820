@@ -281,6 +281,13 @@ private:
   double rateLimitReportAngular_ = 0.05;
   // Menu state from messages older than this is ignored [s].
   double rawButtonTimeout_ = 0.5;
+  // Stiffness of the hand / upper-arm retargeting tasks, re-applied every cycle (<= 0: leave as is).
+  // RelativeRetargetting / OrientationRetargetting reset their task to minStiffness (5) every cycle
+  // on the VIVE path because they never see their own input as "active"; with 5 the real hand
+  // lagged the target by ~0.3 s (2026-11-24 log). The original design ramps up to maxStiffness (50).
+  double handTaskStiffness_ = 0.0;
+  double armTaskStiffness_ = 0.0;
+  void applyTaskStiffness();
   double twoHandPressWindow_ = 0.5;
   double twoHandPauseHoldDuration_ = 1.5;
   double bothMenuHoldStartTime_ = -1.0;
