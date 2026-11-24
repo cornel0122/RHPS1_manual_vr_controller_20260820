@@ -61,6 +61,7 @@ class ZedStreamPublisher(Node):
         camera_info_topic="",
         inference_width=640,
         inference_height=360,
+        depth_fps=0.0,
     ):
         super().__init__("rhps1_zed_stream_ros2_publisher")
         self.sl = sl
@@ -74,8 +75,13 @@ class ZedStreamPublisher(Node):
         self.inference_height = max(int(inference_height), 1)
         self.depth_enabled = bool(inference_topic and depth_topic and camera_info_topic)
         self.minimum_period = 1.0 / max_fps if max_fps > 0.0 else 0.0
+        # Depth/RGB/CameraInfo for the intent recogniser may run slower than the HMD JPEG: on frames where
+        # depth is not due, grab() skips the NEURAL depth computation entirely (0 = every frame).
+        self.depth_period = 1.0 / depth_fps if depth_fps > 0.0 else 0.0
         self.last_publish = 0.0
+        self.next_depth_due = 0.0
         self.frames = 0
+        self.depth_frames = 0
 
         host, port = split_endpoint(endpoint)
         init = sl.InitParameters()
@@ -147,12 +153,23 @@ class ZedStreamPublisher(Node):
         msg.p = [fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0]
         return msg
 
+    # Frames arrive with jitter; a strict "period since last publish" gate drops every frame that is a
+    # little early, which turned a 15 fps stream with --fps 15 into ~10 Hz. Accept 20 % early frames.
+    RATE_TOLERANCE = 0.8
+
     def capture_once(self):
+        # Depth follows a fixed schedule (next due = previous due + period), so its average rate matches
+        # --depth-fps even when the camera period does not divide it (15 fps camera, 10 Hz depth).
+        depth_due = self.depth_enabled and (
+            self.depth_period <= 0.0 or time.monotonic() >= self.next_depth_due
+        )
+        self.runtime.enable_depth = depth_due
         if self.camera.grab(self.runtime) != self.sl.ERROR_CODE.SUCCESS:
             return
 
         now = time.monotonic()
-        if self.minimum_period > 0.0 and now - self.last_publish < self.minimum_period:
+        if (self.minimum_period > 0.0
+                and now - self.last_publish < self.RATE_TOLERANCE * self.minimum_period):
             return
 
         self.camera.retrieve_image(self.image, self.sl.VIEW.LEFT)
@@ -184,7 +201,10 @@ class ZedStreamPublisher(Node):
                 compressed.data = jpeg.tobytes()
                 self.compressed_publisher.publish(compressed)
 
-        if self.depth_enabled:
+        if depth_due:
+            # Never fall more than one period behind (e.g. after a stream stall).
+            self.next_depth_due = max(self.next_depth_due + self.depth_period, now - self.depth_period)
+            self.depth_frames += 1
             self.camera.retrieve_measure(self.depth, self.sl.MEASURE.DEPTH)
             depth = np.asarray(self.depth.get_data(), dtype=np.float32)
             if depth.ndim == 3:
@@ -216,7 +236,8 @@ class ZedStreamPublisher(Node):
         self.frames += 1
         if self.frames == 1 or self.frames % 100 == 0:
             self.get_logger().info(
-                f"Published {self.frames} ZED frame(s): {frame.shape[1]}x{frame.shape[0]} {encoding}"
+                f"Published {self.frames} ZED frame(s) ({self.depth_frames} with depth): "
+                f"{frame.shape[1]}x{frame.shape[0]} {encoding}"
             )
 
         if self.preview:
@@ -247,6 +268,8 @@ def main():
     parser.add_argument("--camera-info-topic", default="")
     parser.add_argument("--inference-width", type=int, default=640)
     parser.add_argument("--inference-height", type=int, default=360)
+    parser.add_argument("--depth-fps", type=float, default=0.0,
+                        help="Max rate of depth + inference RGB + CameraInfo (0 = every published frame).")
     parser.add_argument("--frame-id", default="zed_left_camera_optical_frame")
     parser.add_argument("--fps", type=float, default=20.0)
     parser.add_argument("--no-raw", action="store_true", help="Do not publish the raw Image topic (same as --topic '').")
@@ -273,6 +296,7 @@ def main():
         camera_info_topic=args.camera_info_topic,
         inference_width=args.inference_width,
         inference_height=args.inference_height,
+        depth_fps=args.depth_fps,
     )
     stop = threading.Event()
 

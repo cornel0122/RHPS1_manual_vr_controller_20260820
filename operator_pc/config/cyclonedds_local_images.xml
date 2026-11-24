@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- CycloneDDS settings for the LOCAL image domain (201) on the Operator PC.
+     Images (RGB ~0.7 MB, depth ~0.9 MB, HMD JPEG ~0.2 MB) are larger than the default 208 kB socket
+     receive buffer, so best-effort fragments were dropped (rgb 6 Hz / depth 4 Hz at 10 Hz published).
+     Only "max" is set: the buffer grows up to net.core.rmem_max and silently falls back to the current
+     size if that limit has not been raised, so this file never prevents a node from starting.
+     Raise the kernel limit once (see docs/RHPS1真机启动清单_当前版_20261118.md, ZED section):
+       sudo sysctl -w net.core.rmem_max=33554432 -->
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain id="any">
+    <Internal>
+      <SocketReceiveBufferSize max="32MB"/>
+    </Internal>
+  </Domain>
+</CycloneDDS>

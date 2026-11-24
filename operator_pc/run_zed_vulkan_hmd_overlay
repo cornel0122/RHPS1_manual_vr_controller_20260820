@@ -31,6 +31,8 @@ export ROS_DOMAIN_ID="${RHPS1_ZED_LOCAL_DOMAIN_ID:-201}"
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export ROS_LOCALHOST_ONLY=1
 unset ZENOH_SESSION_CONFIG_URI
+# The HMD JPEG (~0.2 MB) is as large as the default socket receive buffer (falls back silently).
+export CYCLONEDDS_URI="${CYCLONEDDS_URI:-file://$ROOT_DIR/config/cyclonedds_local_images.xml}"
 
 cleanup()
 {
