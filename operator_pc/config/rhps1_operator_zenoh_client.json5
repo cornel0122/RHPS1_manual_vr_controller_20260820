@@ -1,0 +1,15 @@
+// Operator PC Zenoh session: client of the router on Control PC (10.16.236.199:7447).
+// 2026-11-24: the previous peer config (rhps1_operator_zenoh_session.json5) no longer delivered any
+// VIVE data -- Control PC peers listen on 127.0.0.1 only and never connected back. In client mode
+// every message goes through the router, so no connection back to the Operator PC is needed.
+{
+  mode: "client",
+  connect: {
+    endpoints: ["tcp/10.16.236.199:7447"],
+    timeout_ms: { router: -1, peer: -1, client: -1 },
+    exit_on_failure: { router: false, peer: false, client: false },
+  },
+  scouting: {
+    multicast: { enabled: false },
+  },
+}

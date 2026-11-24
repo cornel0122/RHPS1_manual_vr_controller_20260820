@@ -7,4 +7,7 @@ source /opt/ros/humble/setup.bash
 export ROS_DOMAIN_ID="${RHPS1_ROS_DOMAIN_ID:-200}"
 export RMW_IMPLEMENTATION="${RHPS1_RMW_IMPLEMENTATION:-rmw_zenoh_cpp}"
 export ROS_LOCALHOST_ONLY="${RHPS1_ROS_LOCALHOST_ONLY:-0}"
-export ZENOH_SESSION_CONFIG_URI="${ZENOH_SESSION_CONFIG_URI:-$OPERATOR_PC_DIR/config/rhps1_operator_zenoh_session.json5}"
+# 2026-11-24: client mode (all traffic through the router on Control PC). The old peer config
+# (config/rhps1_operator_zenoh_session.json5) stopped delivering VIVE data; set
+# ZENOH_SESSION_CONFIG_URI to it explicitly only for comparison.
+export ZENOH_SESSION_CONFIG_URI="${ZENOH_SESSION_CONFIG_URI:-$OPERATOR_PC_DIR/config/rhps1_operator_zenoh_client.json5}"
