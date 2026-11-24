@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# The single ZED receiver on the Operator PC (design by Codex, 2026-09-30; adapted 2026-11-24).
+#   HMD JPEG : $RHPS1_ZED_HMD_COMPRESSED_TOPIC (default /rtgr/local/zed/left/image_raw/compressed)
+#   CHMM RGB : /rtgr/robot/head_camera/rgb/image_raw
+#   depth    : /rtgr/robot/head_camera/depth/image_raw   (32FC1 metres, NEURAL depth on this PC's GPU)
+#   intrinsics: /rtgr/robot/head_camera/camera_info
+# RHPS1_ZED_DEPTH=0 publishes only the HMD JPEG (no GPU depth).
+#
+# Images stay on a LOCAL ROS domain (201, CycloneDDS, localhost only). They must not go over the VIVE
+# control network: with the Zenoh client config every message would travel through the router on
+# Control PC. Use CycloneDDS so the Vulkan overlay (which cannot use Fast DDS) can subscribe.
+# NOTE: the Cornel intent recogniser publishes /goal_beliefs for the controller on domain 200; running
+# it against these local topics needs a domain bridge or a second context (not set up yet).
+set -eo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source /opt/ros/humble/setup.bash
+export ROS_DOMAIN_ID="${RHPS1_ZED_LOCAL_DOMAIN_ID:-201}"
+export RMW_IMPLEMENTATION="${RHPS1_ZED_LOCAL_RMW:-rmw_cyclonedds_cpp}"
+export ROS_LOCALHOST_ONLY=1
+unset ZENOH_SESSION_CONFIG_URI
+
+STREAM="${RHPS1_ZED_STREAM_ENDPOINT:-10.16.236.200:30000}"
+FPS="${RHPS1_ZED_BRIDGE_FPS:-15}"
+HMD_TOPIC="${RHPS1_ZED_HMD_COMPRESSED_TOPIC:-/rtgr/local/zed/left/image_raw/compressed}"
+# Must match IntentRecognitionBridge camera_optical_frame_id, otherwise goal positions are rejected.
+FRAME_ID="${RHPS1_ZED_FRAME_ID:-head_camera_optical_frame}"
+
+DEPTH_ARGS=()
+if [[ "${RHPS1_ZED_DEPTH:-1}" != "0" ]]; then
+  DEPTH_ARGS=(--inference-topic /rtgr/robot/head_camera/rgb/image_raw
+              --depth-topic /rtgr/robot/head_camera/depth/image_raw
+              --camera-info-topic /rtgr/robot/head_camera/camera_info
+              --inference-width "${RHPS1_ZED_INFERENCE_WIDTH:-640}"
+              --inference-height "${RHPS1_ZED_INFERENCE_HEIGHT:-360}")
+fi
+
+echo "One ZED receiver: $STREAM  (domain $ROS_DOMAIN_ID, $RMW_IMPLEMENTATION, frame $FRAME_ID)"
+echo "  HMD JPEG: $HMD_TOPIC"
+[[ ${#DEPTH_ARGS[@]} -gt 0 ]] && echo "  CHMM RGB/depth/camera_info: /rtgr/robot/head_camera/{rgb/image_raw,depth/image_raw,camera_info}"
+
+exec python3 "$ROOT_DIR/zed_stream_ros2_publisher.py" \
+  --stream "$STREAM" \
+  --topic "" \
+  --compressed-topic "$HMD_TOPIC" \
+  --jpeg-quality "${RHPS1_ZED_HMD_JPEG_QUALITY:-95}" \
+  --hmd-width "${RHPS1_ZED_HMD_WIDTH:-1280}" \
+  --hmd-height "${RHPS1_ZED_HMD_HEIGHT:-720}" \
+  --frame-id "$FRAME_ID" \
+  --fps "$FPS" \
+  "${DEPTH_ARGS[@]}" \
+  ${RHPS1_ZED_DESKTOP_PREVIEW:+--preview} \
+  "$@"

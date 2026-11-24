@@ -13,7 +13,7 @@ set -eo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 STREAM="${RHPS1_ZED_STREAM_ENDPOINT:-10.16.236.200:30000}"
-TOPIC="${RHPS1_ZED_COMPRESSED_TOPIC:-/rtgr/local/zed/left/compressed}"
+TOPIC="${RHPS1_ZED_HMD_COMPRESSED_TOPIC:-${RHPS1_ZED_COMPRESSED_TOPIC:-/rtgr/local/zed/left/image_raw/compressed}}"
 FPS="${HEAD_CAMERA_OVERLAY_FPS:-15}"
 OVERLAY_BIN="${HEAD_CAMERA_VULKAN_OVERLAY_BIN:-$HOME/luyisi/head_camera_openvr_texture_overlay/build/head_camera_openvr_vulkan_overlay}"
 OPENVR_LIB="${OPENVR_LIB_DIR:-$HOME/openvr/bin/linux64}"
@@ -41,16 +41,21 @@ cleanup()
 }
 trap cleanup EXIT INT TERM
 
-if [[ "${RHPS1_OVERLAY_TEST_PATTERN:-0}" == "1" ]]; then
+if [[ "${RHPS1_OVERLAY_SUBSCRIBE_ONLY:-0}" == "1" ]]; then
+  # The single receiver (run_zed_sdk_ros_bridge_local) is already running; only display.
+  echo "Subscribing to $TOPIC (receiver started separately) -> Vulkan HMD overlay"
+elif [[ "${RHPS1_OVERLAY_TEST_PATTERN:-0}" == "1" ]]; then
   # Animated colour bars (the pattern used when this overlay was first validated).
   echo "TEST PATTERN -> JPEG $TOPIC (${FPS} FPS) -> Vulkan HMD overlay"
   python3 "$ROOT_DIR/tools/publish_overlay_test_pattern.py" --topic "$TOPIC" --fps "$FPS" &
+  PUBLISHER_PID=$!
 else
-  echo "ZED stream $STREAM -> JPEG $TOPIC (${FPS} FPS) -> Vulkan HMD overlay"
-  python3 "$ROOT_DIR/zed_stream_ros2_publisher.py" \
-    --stream "$STREAM" --compressed-topic "$TOPIC" --no-raw --fps "$FPS" &
+  # Start the single ZED receiver for the HMD only (no GPU depth unless RHPS1_ZED_DEPTH=1).
+  # Never run a second receiver while another one is up: two readers corrupt the ZED stream.
+  RHPS1_ZED_STREAM_ENDPOINT="$STREAM" RHPS1_ZED_BRIDGE_FPS="$FPS" RHPS1_ZED_HMD_COMPRESSED_TOPIC="$TOPIC" \
+    RHPS1_ZED_DEPTH="${RHPS1_ZED_DEPTH:-0}" "$ROOT_DIR/run_zed_sdk_ros_bridge_local" &
+  PUBLISHER_PID=$!
 fi
-PUBLISHER_PID=$!
 
 # The overlay's Vulkan texture must live on the GPU that runs the SteamVR compositor (Intel here).
 env -u __NV_PRIME_RENDER_OFFLOAD -u __VK_LAYER_NV_optimus \
