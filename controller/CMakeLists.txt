@@ -57,6 +57,8 @@ set(AVATAR_GRIPPER_PROFILE "sake2")
 set(AVATAR_GRIPPER_EXPECTED_ACTIVE_JOINTS 1)
 set(AVATAR_GRIPPER_CONTROL_MODE "analog_trigger")
 set(AVATAR_GRASP_NOTIFICATION_INPUT "grip")
+set(AVATAR_GRIPPER_OPEN_VALUE "1.0")
+set(AVATAR_GRIPPER_CLOSED_VALUE "0.0")
 set(AVATAR_LEFT_HAND_ORIENTATION_OFFSET_RPY_DEG "0.0, 0.0, 0.0")
 set(AVATAR_RIGHT_HAND_ORIENTATION_OFFSET_RPY_DEG "0.0, 0.0, 0.0")
 set(AVATAR_HAND_ORIENTATION_CALIBRATION_GUI "false")
@@ -162,6 +164,11 @@ set(AVATAR_GRIPPER_PROFILE "leap")
 set(AVATAR_GRIPPER_EXPECTED_ACTIVE_JOINTS 16)
 set(AVATAR_GRIPPER_CONTROL_MODE "analog_trigger")
 set(AVATAR_GRASP_NOTIFICATION_INPUT "grip")
+# LEAP: the real hand closes towards the opposite end of the gripper range from the model
+# (2026-11-24 joint test), so swap the trigger end points: released = open hand, pulled = fist.
+# Also flips the built-in A/B/C/D closure direction, which uses the same pair.
+set(AVATAR_GRIPPER_OPEN_VALUE "0.0")
+set(AVATAR_GRIPPER_CLOSED_VALUE "1.0")
 # LEAP Hand visual/kinematic frames are rotated by 90 degrees around their
 # local blue (+Z) axis relative to the calibrated anatomical hand frame.
 # The left hand uses Rz(-90 deg). The mirrored right-hand mounting needs the

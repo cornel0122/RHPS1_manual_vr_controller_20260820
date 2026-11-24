@@ -1161,6 +1161,10 @@ states:
     gripper_expected_active_joints: @AVATAR_GRIPPER_EXPECTED_ACTIVE_JOINTS@
     gripper_control_mode: "@AVATAR_GRIPPER_CONTROL_MODE@"
     grasp_notification_input: "@AVATAR_GRASP_NOTIFICATION_INPUT@"
+    # Gripper opening for a released / fully pulled trigger, selected per variant in CMake.
+    # Sake2: 1.0 / 0.0. LEAP: 0.0 / 1.0 (released = open hand, pulled = fist on the real hand).
+    open_value: @AVATAR_GRIPPER_OPEN_VALUE@
+    closed_value: @AVATAR_GRIPPER_CLOSED_VALUE@
     # End-effector frame correction selected by the controller variant.
     # Sake2 variants remain 0/0/0; LEAP uses left yaw -90 and right yaw +90 degrees.
     left_hand_orientation_offset_rpy_deg: [@AVATAR_LEFT_HAND_ORIENTATION_OFFSET_RPY_DEG@]
