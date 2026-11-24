@@ -7,6 +7,7 @@ import threading
 import time
 from ctypes import c_ubyte
 
+import cv2
 import numpy as np
 import openvr
 import rclpy
@@ -17,12 +18,25 @@ from sensor_msgs.msg import Image
 
 
 class HeadCameraOverlay(Node):
-    def __init__(self, topic: str, width_m: float, distance_m: float, fps: float, debug_marker: bool):
+    def __init__(self, topic: str, width_m: float, distance_m: float, fps: float, debug_marker: bool,
+                 max_width: int = 640, submit_mode: str = "raw"):
         super().__init__("head_camera_openvr_overlay")
         self.bridge = CvBridge()
         self.overlay = openvr.VROverlay()
         self.overlay_handle = self._create_overlay()
         self.width_m = width_m
+        # 真机 ZED 为 1920x1080（每帧 RGBA 约 8 MB）。SteamVR compositor 的 Vulkan 传输缓冲区
+        # 收到约 2.3 MB 的 setOverlayRaw 就会断言失败并崩溃（2026-11-24 vrcompositor 日志），
+        # 960 宽（约 2 MB）仍会崩溃；默认缩小到 640 宽（约 0.9 MB）。<= 0 表示不缩放。
+        self.max_width = max_width
+        # submit_mode="file": write each frame as a PNG under the home directory (visible inside the
+        # Steam runtime container) and call setOverlayFromFile. On this laptop the HMD is driven by the
+        # Intel iGPU, and setOverlayRaw makes vrcompositor abort with "Vulkan transfer ring buffer
+        # overflow; transfer size 2315040" after a few seconds regardless of the image size (2026-11-24).
+        self.submit_mode = submit_mode
+        self.file_dir = os.path.expanduser("~/.cache/rhps1_head_overlay")
+        if self.submit_mode == "file":
+            os.makedirs(self.file_dir, exist_ok=True)
         self.distance_m = distance_m
         self.min_period = 1.0 / fps if fps > 0.0 else 0.0
         self.last_publish = 0.0
@@ -154,6 +168,11 @@ class HeadCameraOverlay(Node):
             if image.ndim != 3 or image.shape[2] != 3:
                 raise ValueError(f"expected rgb8 image, got shape {image.shape}")
 
+            if self.max_width > 0 and image.shape[1] > self.max_width:
+                scale = self.max_width / image.shape[1]
+                image = cv2.resize(image, (self.max_width, max(1, int(round(image.shape[0] * scale)))),
+                                   interpolation=cv2.INTER_AREA)
+                image = np.ascontiguousarray(image, dtype=np.uint8)
             height, width, _ = image.shape
             if self.debug_marker:
                 marker_size = max(8, min(width, height) // 16)
@@ -161,6 +180,19 @@ class HeadCameraOverlay(Node):
                 x = 4 + phase * (marker_size + 4)
                 y = 4
                 image[y : y + marker_size, x : x + marker_size, :] = (255, 32, 32)
+
+            if self.submit_mode == "file":
+                # Rotate between three files so SteamVR never reads a file that is being rewritten.
+                path = os.path.join(self.file_dir, f"frame_{self.frames_sent % 3}.png")
+                cv2.imwrite(path, cv2.cvtColor(image, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_PNG_COMPRESSION, 1])
+                with self.lock:
+                    self._drain_overlay_events()
+                    self.overlay.setOverlayFromFile(self.overlay_handle, path)
+                self.last_publish = now
+                self.frames_sent += 1
+                if self.frames_sent == 1 or self.frames_sent % 50 == 0:
+                    self.get_logger().info(f"Submitted {self.frames_sent} frame(s) to OpenVR overlay (file mode)")
+                return
 
             if self.rgba_buffer is None or self.rgba_buffer.shape[:2] != (height, width):
                 self.rgba_buffer = np.empty((height, width, 4), dtype=np.uint8)
@@ -203,11 +235,17 @@ def main():
     parser.add_argument("--distance-m", type=float, default=1.2)
     parser.add_argument("--fps", type=float, default=10.0)
     parser.add_argument("--no-debug-marker", action="store_true", help="Do not draw the small moving red marker.")
+    parser.add_argument("--max-width", type=int, default=640,
+                        help="Downscale images wider than this before sending them to SteamVR (<= 0: no scaling).")
+    parser.add_argument("--submit-mode", choices=["raw", "file"], default="raw",
+                        help="raw: setOverlayRaw; file: write PNG frames and use setOverlayFromFile "
+                             "(use on the Intel-driven HMD, where raw crashes vrcompositor).")
     args = parser.parse_args()
 
     openvr.init(openvr.VRApplication_Overlay)
     rclpy.init(args=None)
-    node = HeadCameraOverlay(args.topic, args.width_m, args.distance_m, args.fps, not args.no_debug_marker)
+    node = HeadCameraOverlay(args.topic, args.width_m, args.distance_m, args.fps, not args.no_debug_marker,
+                             args.max_width, args.submit_mode)
 
     stop = threading.Event()
 

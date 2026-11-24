@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Robot head ZED -> HMD, using the Vulkan texture overlay (head_camera_openvr_vulkan_overlay).
+#
+# Why not run_zed_sdk_hmd_overlay_local: on this laptop the VIVE Pro is wired to the Intel iGPU,
+# so SteamVR's compositor runs on Intel Arc. Updating an overlay through setOverlayRaw or
+# setOverlayFromFile makes vrcompositor abort within seconds ("Vulkan transfer ring buffer overflow;
+# transfer size 2315040", 2026-11-24). The Vulkan overlay creates the texture on the same Intel GPU
+# and hands it to SteamVR directly (built 2026-09/10, tested with tools/publish_overlay_test_pattern.py).
+#
+#   ./run_zed_vulkan_hmd_overlay                    # stream from the Vision PC
+#   RHPS1_ZED_STREAM_ENDPOINT=127.0.0.1:30000 ./run_zed_vulkan_hmd_overlay
+set -eo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STREAM="${RHPS1_ZED_STREAM_ENDPOINT:-10.16.236.200:30000}"
+TOPIC="${RHPS1_ZED_COMPRESSED_TOPIC:-/rtgr/local/zed/left/compressed}"
+FPS="${HEAD_CAMERA_OVERLAY_FPS:-15}"
+OVERLAY_BIN="${HEAD_CAMERA_VULKAN_OVERLAY_BIN:-$HOME/luyisi/head_camera_openvr_texture_overlay/build/head_camera_openvr_vulkan_overlay}"
+OPENVR_LIB="${OPENVR_LIB_DIR:-$HOME/openvr/bin/linux64}"
+
+if [[ ! -x "$OVERLAY_BIN" ]]; then
+  echo "Vulkan overlay binary not found: $OVERLAY_BIN" >&2
+  exit 1
+fi
+
+# Image chain stays local and separate from the VIVE control chain (domain 200 / Zenoh).
+source /opt/ros/humble/setup.bash
+export ROS_DOMAIN_ID="${RHPS1_ZED_LOCAL_DOMAIN_ID:-201}"
+# CycloneDDS, not Fast DDS: libopenvr_api.so exports its own C++ runtime, and an exception that
+# Fast DDS throws and catches internally while opening sockets ends in std::terminate (abort).
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export ROS_LOCALHOST_ONLY=1
+unset ZENOH_SESSION_CONFIG_URI
+
+cleanup()
+{
+  if [[ -n "${PUBLISHER_PID:-}" ]]; then
+    kill "$PUBLISHER_PID" 2>/dev/null || true
+    wait "$PUBLISHER_PID" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT INT TERM
+
+if [[ "${RHPS1_OVERLAY_TEST_PATTERN:-0}" == "1" ]]; then
+  # Animated colour bars (the pattern used when this overlay was first validated).
+  echo "TEST PATTERN -> JPEG $TOPIC (${FPS} FPS) -> Vulkan HMD overlay"
+  python3 "$ROOT_DIR/tools/publish_overlay_test_pattern.py" --topic "$TOPIC" --fps "$FPS" &
+else
+  echo "ZED stream $STREAM -> JPEG $TOPIC (${FPS} FPS) -> Vulkan HMD overlay"
+  python3 "$ROOT_DIR/zed_stream_ros2_publisher.py" \
+    --stream "$STREAM" --compressed-topic "$TOPIC" --no-raw --fps "$FPS" &
+fi
+PUBLISHER_PID=$!
+
+# The overlay's Vulkan texture must live on the GPU that runs the SteamVR compositor (Intel here).
+env -u __NV_PRIME_RENDER_OFFLOAD -u __VK_LAYER_NV_optimus \
+  __GLX_VENDOR_LIBRARY_NAME=mesa DRI_PRIME=0 \
+  LD_LIBRARY_PATH="$OPENVR_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+  "$OVERLAY_BIN" --topic "$TOPIC" --fps "$FPS" "$@"
