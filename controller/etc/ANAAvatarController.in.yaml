@@ -1207,8 +1207,8 @@ states:
       # (PIP_k is the sideways abduction joint; THUMB_CMC ~80 deg puts the thumb in the index plane.)
       A: [20, 0, 10, 5,   20, 0, 10, 5,   20, 0, 10, 5,   80, 0, -30, 0]   # open C, thumb out
       B: [90, 0, 50, 70,  60, 0, 20, 5,   60, 0, 20, 5,   80, 0, -30, 0]   # index wraps far side
-      C: [90, 0, 50, 70,  60, 0, 20, 5,   60, 0, 20, 5,   85, 0, 60, 60]   # thumb closes the ring
-      D: [100, 0, 60, 75, 95, 0, 55, 35,  95, 0, 55, 35,  85, 0, 60, 60]   # others support + lock
+      C: [90, 0, 50, 70,  60, 0, 20, 5,   60, 0, 20, 5,   80, 0, 60, 60]   # thumb closes the ring (CMC kept at 80: 85 hits the real limit)
+      D: [100, 0, 60, 75, 95, 0, 55, 35,  95, 0, 55, 35,  80, 0, 60, 60]   # others support + lock
       # Trigger progress at A, B, C, D (after deadzone and low-pass filter).
       breakpoints: [0.0, 0.30, 0.65, 1.0]
       # Extra per-joint speed limit on top of the mc_rtc gripper limit.
@@ -1234,7 +1234,11 @@ states:
       # (11-24: MCP_1 + moves the index away from the middle finger); thumb too close to the index base and
       # jittering (pressing the palm) -> THUMB_CMC 100 -> 110 (round 1 at 120 was straight out, round 2 at 100
       # too far in); thumb still "thumbs-up" -> THUMB_DIP 40 -> 20, THUMB_FINGERTIP 31 -> 10 (lower = more flexed).
-      joint_offset_deg: [70, 58, 79, 96,  55, 58, 79, 96,  55, 58, 79, 96,  110, 113, 20, 10]
+      # Round 4 (H4, 2026-11-27): the user tuned pose A on the real hand in RViz (slot commands): MCP_1 123,
+      # PIP_1 38, DIP_1 100, FINGERTIP_1 100, THUMB_CMC -15 (-19.99 = real limit, twitches), THUMB_PIP 100,
+      # THUMB_DIP 100, THUMB_FINGERTIP 100. offset = command + model(A). Middle/ring fingers take the index
+      # DIP/FINGERTIP offsets (same hardware); their abduction stays 55. C/D thumb CMC 85 -> 80 to stay off the limit.
+      joint_offset_deg: [123, 58, 110, 105,  55, 58, 110, 105,  55, 58, 110, 105,  65, 100, 70, 100]
       # Safety interlock: the ring path can only drive the trigger after the
       # direction table above has been checked on the robot. RViz preview of the
       # ring A/B/C/D candidates (slow, supervised) works without it.
