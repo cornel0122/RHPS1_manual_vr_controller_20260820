@@ -1242,7 +1242,9 @@ states:
       # Safety interlock: the ring path can only drive the trigger after the
       # direction table above has been checked on the robot. RViz preview of the
       # ring A/B/C/D candidates (slow, supervised) works without it.
-      direction_verified: false
+      # 2026-11-27: unlocked at the user's request (ring will be the main grasp). The trigger still uses the
+      # linear path until "Use ring path for the right trigger" is ticked in RViz (or leap_trigger_path: "ring").
+      direction_verified: true
     right_arm_tuning_apply_duration: 8.0
     # Seven RHPS1 right-arm joints, in the order documented by the RViz panel.
     # Loading this pose only changes the editor; a separate APPLY is required.

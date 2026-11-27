@@ -60,6 +60,8 @@ private:
   sva::PTransformd zeroRobot_ = sva::PTransformd::Identity();
 
   bool enable_ = true;
+  // VIVE control modes ("both", "left", "right") in which the HMD drives the robot head.
+  std::vector<std::string> headControlModes_ = {"both"};
   bool requireExternalZero_ = false;
   int headRotationAxisMode_ = 0;
   double headPitchGain_ = 1.0;

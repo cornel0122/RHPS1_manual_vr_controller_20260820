@@ -12,6 +12,7 @@ void ViveHeadBridge::configure(const mc_rtc::Configuration & config)
   config("topic", topic_);
   config("task", taskName_);
   config("enable", enable_);
+  config("head_control_modes", headControlModes_);
   config("zero_request_key", zeroRequestKey_);
   config("require_external_zero", requireExternalZero_);
   config("head_rotation_axis_mode", headRotationAxisMode_);
@@ -86,7 +87,8 @@ bool ViveHeadBridge::run(mc_control::fsm::Controller & ctl)
   const std::string controlModeKey = "ANA::Vive::control_mode";
   const std::string controlMode =
       ctl.datastore().has(controlModeKey) ? ctl.datastore().call<std::string>(controlModeKey) : "both";
-  const bool headControlAllowed = controlMode == "both";
+  const bool headControlAllowed =
+      std::find(headControlModes_.begin(), headControlModes_.end(), controlMode) != headControlModes_.end();
   if(!trackingActive || !headControlAllowed)
   {
     if(task_)

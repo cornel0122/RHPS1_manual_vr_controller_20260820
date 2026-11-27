@@ -22,14 +22,14 @@ cd ~/workspace/build/ANAAvatarControllerRHPS1CornelVive_project
 ninja install
 ```
 按启动清单启动到 Start MC Control（LEAP：`RHPS1_leap_leap` + `ANAAvatarControllerRHPS1CornelVive_leap_manual`）。
-controller 终端会打印 `right trigger path: linear (ring preview only: direction table not verified)`，
+controller 终端会打印 `right trigger path: linear (ring ready)`（11-27 起已解锁，但默认仍是线性 trigger，需在 RViz 勾选才走 ring），
 以及 `ring keyframe A clips R_THUMB_DIP ...`（预期：A/B 里拇指中节想向后弯 30°，真机做不到，变成伸直，无妨）。
 
 ## 2. RViz 慢速预览（每轮约 5 分钟）
 
 界面：`Avatar / LEAP Grasp Tuning / Right Hand`。
 1. `Slow apply duration [s]` = 5 → `ARM RIGHT HAND EDITOR`（`Armed = true`）。
-2. 子页面 `Ring Trigger Path`：`Ring status` 应为 `preview only: direction table not verified`。
+2. 子页面 `Ring Trigger Path`：`Ring status` 应为 `ready`。
    点 `LOAD RING A/B/C/D INTO CANDIDATES (OVERWRITES SLOTS)`。
 3. 子页面 `ABCD Sequence`：四段时长都设 **5 s** → **空手**点 `START CURRENT -> A -> B -> C -> D`。
 4. 每一段对照下表看真手，**拍视频**最好：
@@ -50,10 +50,11 @@ controller 终端会打印 `right trigger path: linear (ring preview only: direc
 
 ## 3. 解锁并用 trigger（10 分钟）
 
-1. 预览全部正确 → Claude 把 `direction_verified: true` 写进配置并推送 → 重装（第 1 步）。
+1. 配置已解锁（`direction_verified: true`，2026-11-27），无需再重装。预览**大致正确**即可进入下一步。
 2. 启动到 Start MC Control，**先不开始 VIVE**；`Ring Trigger Path` 页面勾选 `Use ring path for the right trigger`，
    确认 `Right trigger path = ring`。
 3. Operator PC：`./run_vive_talker_rhps1 --control-mode right`，右手 menu 开始。
+   11-27 起 `right` 模式下头部也跟随 HMD（`rhps1.yaml` → `head_control_modes: ["both", "right"]`），戴 HMD 即可。
    **开始后手会以 ≤90°/s 移到 A 姿势**（松开 trigger = A）。
 4. 空手慢慢扣 trigger：`Current segment` 依次 A→B→C→D，松开回到 A。
 5. 抓瓶：**手先停稳，再扣 trigger**（仿真中边走边扣成功率低）。

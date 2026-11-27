@@ -396,6 +396,9 @@ states:
     topic: "/hmd"
     task: "ANA::HeadRetargetingTask"
     enable: true
+    # VIVE control modes in which the HMD drives the head (default ["both"]). 2026-11-27: the user wants head
+    # following with the right-hand-only setup as well.
+    head_control_modes: ["both", "right"]
     require_external_zero: true
     # 模式 3 以复位时的 HMD 局部坐标为基准，不依赖 SteamVR 房间朝向。
     head_rotation_axis_mode: 3
