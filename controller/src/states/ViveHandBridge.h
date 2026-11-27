@@ -486,6 +486,9 @@ private:
   std::array<double, 4> leapQuickPercent_ = {0.0, 0.0, 0.0, 0.0};
   std::array<std::vector<double>, 4> leapCandidateQ_;
   std::array<bool, 4> leapCandidateValid_ = {false, false, false, false};
+  // Saved candidate as a YAML list in degrees (slot order), shown in RViz and logged, so poses taught on the
+  // real hand can be pasted into leap_ring (operator_pc/tools/leap_ring_calibration.py from-poses).
+  std::array<std::string, 4> leapCandidateText_;
   int leapCandidateSaveRequest_ = -1;
   int leapCandidateLoadRequest_ = -1;
   bool leapBuiltinCandidatesLoadRequested_ = false;

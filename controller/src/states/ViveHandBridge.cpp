@@ -3060,8 +3060,18 @@ void ViveHandBridge::processHardwareTestRequests(mc_control::fsm::Controller & c
       leapCandidateValid_[static_cast<size_t>(slot)] = true;
       const std::string label(1, static_cast<char>('A' + slot));
       leapActiveCandidate_ = label;
-      hardwareTestStatus_ = "saved editor target to candidate " + label + "; session memory only";
-      recordHardwareTestEvent("saved LEAP candidate " + label);
+      std::string text = "[";
+      for(size_t i = 0; i < leapEditorQ_.size(); ++i)
+      {
+        text += fmt::format("{}{:.1f}", i == 0 ? "" : ", ", leapEditorQ_[i] * 180.0 / M_PI);
+      }
+      text += "]";
+      leapCandidateText_[static_cast<size_t>(slot)] = text;
+      std::string order;
+      for(const auto & joint : leapJointNames_) { order += (order.empty() ? "" : " ") + joint; }
+      mc_rtc::log::info("[{}] LEAP candidate {} [deg, slot order {}]: {}", name(), label, order, text);
+      hardwareTestStatus_ = "saved editor target to candidate " + label + " (values in log and Candidate page)";
+      recordHardwareTestEvent("saved LEAP candidate " + label + " " + text);
     }
   }
   if(leapCandidateLoadRequest_ >= 0)
@@ -3402,6 +3412,7 @@ void ViveHandBridge::addLeapHandTuningGui(mc_control::fsm::Controller & ctl)
     ctl.gui()->addElement(
         this, category, mc_rtc::gui::Label("Suggested role (not a validated grasp)", [roles, slot]() { return roles[slot]; }),
         mc_rtc::gui::Label("Saved this session", [this, slot]() { return leapCandidateValid_[slot]; }),
+        mc_rtc::gui::Label("Saved values [deg, slot order]", [this, slot]() { return leapCandidateText_[slot]; }),
         mc_rtc::gui::Button("SAVE EDITOR AS " + label,
                             [this, slot]() { leapCandidateSaveRequest_ = static_cast<int>(slot); }),
         mc_rtc::gui::Button("LOAD " + label + " INTO EDITOR",

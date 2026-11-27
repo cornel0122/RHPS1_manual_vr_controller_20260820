@@ -175,9 +175,77 @@ def cmd_compute(args):
     return 0
 
 
+STAGE_GROUPS = {
+    "index": [0, 1, 2, 3],
+    "middle": [4, 5, 6, 7],
+    "ring": [8, 9, 10, 11],
+    "others": [4, 5, 6, 7, 8, 9, 10, 11],
+    "thumb": [12, 13, 14, 15],
+}
+
+
+def parse_pose(text, what):
+    values = [float(v) for v in text.replace("[", " ").replace("]", " ").replace(",", " ").split()]
+    if len(values) != 16:
+        sys.exit(f"--{what} needs 16 values in slot order, got {len(values)}")
+    return values
+
+
+def cmd_from_poses(args):
+    """Teach-by-demonstration: two poses saved on the real hand (RViz SAVE EDITOR AS ...) in SLOT order.
+
+    A = open (released trigger); D = closed (fully pulled). B and C close the finger groups one after the
+    other, following the ring design: index wraps first, then the thumb closes, then the others.
+    The table is identity, so the keyframes are slot commands as taught (no model convention needed).
+    """
+    open_q, closed_q = parse_pose(args.open, "open"), parse_pose(args.closed, "closed")
+    stages = [s.strip() for s in args.stages.split(",") if s.strip()]
+    if len(stages) != 3 or any(s not in STAGE_GROUPS for s in stages):
+        sys.exit(f"--stages needs three of {sorted(STAGE_GROUPS)}, e.g. index,thumb,others")
+    frames, current = {"A": open_q}, list(open_q)
+    for key, stage in zip(("B", "C", "D"), stages):
+        for i in STAGE_GROUPS[stage]:
+            current[i] = closed_q[i]
+        frames[key] = list(current)
+    if frames["D"] != closed_q:
+        missing = [JOINTS[i] for i in range(16) if frames["D"][i] != closed_q[i]]
+        sys.exit(f"the three stages do not cover every slot (missing {missing}); use e.g. index,thumb,others")
+
+    clamped = []
+    for key, pose in frames.items():
+        for i, v in enumerate(pose):
+            lo, hi = limits(JOINTS[i])
+            if not lo - 1e-6 <= v <= hi + 1e-6:
+                clamped.append(f"{key}:{JOINTS[i]}={v:g}")
+
+    fmt = lambda q: ", ".join(f"{v:g}" for v in q)
+    print("=== paste into leap_ring (controller/etc/ANAAvatarController.in.yaml) ===")
+    print("      # Taught on the real hand (slot order, deg); identity table, so these are slot commands.")
+    labels = {"A": "open (released trigger)", "B": f"{stages[0]} closed", "C": f"+ {stages[1]} closed",
+              "D": "closed (fully pulled)"}
+    for key in ("A", "B", "C", "D"):
+        print(f"      {key}: [{fmt(frames[key])}]   # {labels[key]}")
+    print(f"      breakpoints: [{', '.join(f'{b:g}' for b in args.breakpoints)}]")
+    print("      joint_map: [0, 1, 2, 3,  4, 5, 6, 7,  8, 9, 10, 11,  12, 13, 14, 15]")
+    print("      joint_sign: [1, 1, 1, 1,  1, 1, 1, 1,  1, 1, 1, 1,  1, 1, 1, 1]")
+    print("      joint_offset_deg: [0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0,  0, 0, 0, 0]")
+    print("      direction_verified: false   # true only after the RViz slow preview of A/B/C/D on the robot")
+    if clamped:
+        print("\nPROBLEMS: values outside the slot URDF range (would be clamped): " + ", ".join(clamped))
+        return 1
+    print("\nOK. Next: RViz slow preview of A/B/C/D, then unlock (direction_verified: true).")
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
+    f = sub.add_parser("from-poses", help="build A/B/C/D from an open and a closed pose taught on the real hand")
+    f.add_argument("--open", required=True, help="16 values [deg], slot order, as logged by SAVE EDITOR AS ...")
+    f.add_argument("--closed", required=True, help="16 values [deg], slot order")
+    f.add_argument("--stages", default="index,thumb,others",
+                   help="order in which finger groups close between A and D (index, thumb, others, middle, ring)")
+    f.add_argument("--breakpoints", type=float, nargs=4, default=[0.0, 0.30, 0.65, 1.0])
     t = sub.add_parser("template", help="write the sheet to fill in on site")
     t.add_argument("--prefill-1124", action="store_true", help="prefill moved_joint/direction with the 11-24 hypothesis")
     t.add_argument("-o", "--output")
@@ -187,6 +255,8 @@ def main():
     if args.cmd == "template":
         cmd_template(args)
         return 0
+    if args.cmd == "from-poses":
+        return cmd_from_poses(args)
     return cmd_compute(args)
 
 
