@@ -1,5 +1,8 @@
 # LEAP 右手关节方向核对：测试步骤
 
+> **2026-11-27：现场请直接用 `docs/LEAP_ring现场操作单.md`**（含零点测量、记录表和计算工具
+> `operator_pc/tools/leap_ring_calibration.py`）。本文档保留原理与 11-24 的记录。
+
 ## 目的
 
 确认真机 LEAP 右手每个关节的实际转动方向是否与 RViz 模型（URDF）一致。
