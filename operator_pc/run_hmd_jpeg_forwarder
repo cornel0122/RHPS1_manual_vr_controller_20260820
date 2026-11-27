@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Operator PC: send the HMD JPEG to the Terminal PC when the HMD/SteamVR/VIVE run there (terminal_pc/README.md).
+# Needs the single ZED receiver running here (./run_zed_sdk_ros_bridge_local), which publishes the JPEG locally.
+#
+#   RHPS1_TERMINAL_PC_IP=10.16.236.201 ./run_hmd_jpeg_forwarder
+# Nothing in the existing image chain changes: same local domain/RMW/CycloneDDS settings as the receiver.
+set -eo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TERMINAL_IP="${RHPS1_TERMINAL_PC_IP:-}"
+if [[ -z "$TERMINAL_IP" ]]; then
+  echo "Set RHPS1_TERMINAL_PC_IP to the Terminal PC address (check it there with: hostname -I)." >&2
+  exit 2
+fi
+source /opt/ros/humble/setup.bash
+export ROS_DOMAIN_ID="${RHPS1_ZED_LOCAL_DOMAIN_ID:-201}"
+export RMW_IMPLEMENTATION="${RHPS1_ZED_LOCAL_RMW:-rmw_cyclonedds_cpp}"
+export ROS_LOCALHOST_ONLY=1
+unset ZENOH_SESSION_CONFIG_URI
+export CYCLONEDDS_URI="${CYCLONEDDS_URI:-file://$ROOT_DIR/config/cyclonedds_local_images.xml}"
+
+exec python3 "$ROOT_DIR/tools/hmd_jpeg_forwarder.py" \
+  --host "$TERMINAL_IP" \
+  --port "${RHPS1_HMD_FORWARD_PORT:-30555}" \
+  --topic "${RHPS1_ZED_HMD_COMPRESSED_TOPIC:-/rtgr/local/zed/left/image_raw/compressed}" \
+  "$@"

@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# Terminal PC: show the robot head camera in the HMD (SteamVR running here, HMD on this PC's GPU).
+#
+#   ./run_hmd_terminal                          # receive the JPEG from the Operator PC (run_hmd_jpeg_forwarder)
+#   RHPS1_OVERLAY_TEST_PATTERN=1 ./run_hmd_terminal   # local colour bars, no Operator PC needed
+#
+# Unlike operator_pc/run_zed_vulkan_hmd_overlay, no Intel-GPU environment is forced: the overlay asks SteamVR
+# which GPU it uses (IVRSystem::GetOutputDevice) and creates its texture there.
+set -eo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$ROOT_DIR/.." && pwd)"
+TOPIC="${RHPS1_ZED_HMD_COMPRESSED_TOPIC:-/rtgr/local/zed/left/image_raw/compressed}"
+FPS="${HEAD_CAMERA_OVERLAY_FPS:-15}"
+OVERLAY_BIN="${HEAD_CAMERA_VULKAN_OVERLAY_BIN:-$REPO_DIR/operator_pc/hmd_vulkan_overlay/build/head_camera_openvr_vulkan_overlay}"
+OPENVR_LIB="${OPENVR_LIB_DIR:-$HOME/openvr/bin/linux64}"
+
+if [[ ! -x "$OVERLAY_BIN" ]]; then
+  echo "Overlay binary not found: $OVERLAY_BIN (build it, see terminal_pc/README.md)" >&2
+  exit 1
+fi
+if ! pgrep -x vrcompositor >/dev/null; then
+  echo "SteamVR is not running (no vrcompositor). Start SteamVR first." >&2
+  exit 1
+fi
+
+# Local image domain on this PC only (the JPEG arrives over TCP, not over ROS between PCs).
+source /opt/ros/humble/setup.bash
+export ROS_DOMAIN_ID="${RHPS1_TERMINAL_IMAGE_DOMAIN_ID:-201}"
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp   # libopenvr_api.so + Fast DDS aborts (see hmd_vulkan_overlay/README.md)
+export ROS_LOCALHOST_ONLY=1
+unset ZENOH_SESSION_CONFIG_URI
+export CYCLONEDDS_URI="${CYCLONEDDS_URI:-file://$REPO_DIR/operator_pc/config/cyclonedds_local_images.xml}"
+
+PIDS=()
+cleanup() { for p in "${PIDS[@]}"; do kill "$p" 2>/dev/null || true; done; wait 2>/dev/null || true; }
+trap cleanup EXIT INT TERM
+
+if [[ "${RHPS1_OVERLAY_TEST_PATTERN:-0}" == "1" ]]; then
+  echo "TEST PATTERN -> $TOPIC -> HMD overlay"
+  python3 "$REPO_DIR/operator_pc/tools/publish_overlay_test_pattern.py" --topic "$TOPIC" --fps "$FPS" &
+  PIDS+=($!)
+else
+  echo "JPEG from the Operator PC (TCP :${RHPS1_HMD_FORWARD_PORT:-30555}) -> $TOPIC -> HMD overlay"
+  python3 "$ROOT_DIR/hmd_jpeg_receiver.py" --port "${RHPS1_HMD_FORWARD_PORT:-30555}" --topic "$TOPIC" &
+  PIDS+=($!)
+fi
+
+LD_LIBRARY_PATH="$OPENVR_LIB${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+  "$OVERLAY_BIN" --topic "$TOPIC" --fps "$FPS" "$@"
