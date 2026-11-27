@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Record what the HMD shows (the HMD JPEG topic) to ~/rhps1_hmd_recordings/hmd_view_<time>.mp4.
+# Run it next to run_zed_sdk_ros_bridge_local / run_zed_vulkan_hmd_overlay (Operator PC) or run_hmd_terminal
+# (Terminal PC). In the terminal: s + Enter = still image, q + Enter = stop.
+set -eo pipefail
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source /opt/ros/humble/setup.bash
+export ROS_DOMAIN_ID="${RHPS1_ZED_LOCAL_DOMAIN_ID:-201}"
+export RMW_IMPLEMENTATION="${RHPS1_ZED_LOCAL_RMW:-rmw_cyclonedds_cpp}"
+export ROS_LOCALHOST_ONLY=1
+unset ZENOH_SESSION_CONFIG_URI
+export CYCLONEDDS_URI="${CYCLONEDDS_URI:-file://$ROOT_DIR/config/cyclonedds_local_images.xml}"
+exec python3 "$ROOT_DIR/tools/record_hmd_view.py" \
+  --topic "${RHPS1_ZED_HMD_COMPRESSED_TOPIC:-/rtgr/local/zed/left/image_raw/compressed}" "$@"

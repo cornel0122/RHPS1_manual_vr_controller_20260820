@@ -69,6 +69,7 @@ RHPS1_TERMINAL_PC_IP=<Terminal PC 的 IP> ./run_hmd_jpeg_forwarder # 新增：�
 ```
 `run_hmd_terminal` 每 5 s 打印 `received=`，`run_hmd_jpeg_forwarder` 打印 `received= sent=`，两边数字一起涨就是通了。
 连不上：Terminal PC 的防火墙要放行 TCP 30555（检查结果里 `ufw firewall: ENABLED=`）。
+录 HMD 画面：Terminal PC 上 `~/rhps1_cornel_vive_controller/operator_pc/run_record_hmd_view`（录的是收到的同一路 JPEG）。
 
 ## 已验证 / 未验证
 - 11-27 在 Operator PC 上用两个本地 ROS domain 模拟两台电脑：测试图 15 Hz → 转发 → 接收，375/375 帧全部收到。
