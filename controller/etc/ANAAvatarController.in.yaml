@@ -1217,18 +1217,20 @@ states:
       # mc_rtc gripper clamps slot i to the URDF range of the slot's own joint name.
       # Slot / model joint order: MCP_1 PIP_1 DIP_1 FINGERTIP_1 | ..._2 | ..._3 | THUMB_CMC PIP DIP FINGERTIP.
       #
-      # 2026-11-27 ESTIMATE ("H1"), to be checked on the robot (docs/LEAP_ring现场操作单.md), derived from the
-      # 11-24 test: (1) on the four fingers the base flexion/abduction slots are swapped (plugin sends slots in
-      # model order, motors are "abduction, flexion, ..."); (2) every joint moves opposite to the model;
-      # (3) the hand is already bent at command 0 and the linear trigger reaches a fist, which fits
-      # "real angle = slot upper limit - command" (open at the slot's upper limit). Hence offsets = slot upper
-      # limit for flexion-driving slots, 0 for abduction slots (model abduction is 0 in all keyframes).
-      # Known clip with this table: thumb DIP in A/B (-30 deg bent back) becomes 0 (straight); harmless.
-      # First things to check on site: fingers splayed sideways in A -> abduction offsets (MCP_k slots: 0 here,
-      # alternatives 55 / 128); a finger bending the wrong way -> that slot's sign; too open/closed -> offset.
+      # 2026-11-27 ESTIMATE "H2" (second on-site round), to be checked on the robot (docs/LEAP_ring现场操作单.md).
+      # From the 11-24 test: (1) on the four fingers the base flexion/abduction slots are swapped (plugin sends
+      # slots in model order, motors are "abduction, flexion, ..."); (2) every joint moves opposite to the model.
+      # Round 1 (H1: offsets = slot upper limit) gave: index splayed ~45 deg towards the little finger, thumb
+      # straight and pointing out. Both fit "the plugin maps each slot's URDF range onto the motor's range,
+      # reversed": real = L_motor + (U_slot - cmd) * (U_motor - L_motor) / (U_slot - L_slot).
+      # Hence for non-swapped slots offset = L + U (mirror about the range middle); for the swapped base slots the
+      # scale differs (0.82) and the offset is the best fit over the ring values: abduction slots 55 (neutral at
+      # the slot middle), flexion slots 58. No keyframe value clips with this table.
+      # On site: fingers still splayed -> MCP_k offsets; a joint bending the wrong way -> that slot's sign;
+      # too open/closed -> that slot's offset (base flexion up to ~12 deg off because of the missing scale).
       joint_map: [1, 0, 2, 3,  5, 4, 6, 7,  9, 8, 10, 11,  12, 13, 14, 15]
       joint_sign: [-1, -1, -1, -1,  -1, -1, -1, -1,  -1, -1, -1, -1,  -1, -1, -1, -1]
-      joint_offset_deg: [0, 60, 108, 117,  0, 60, 108, 117,  0, 60, 108, 117,  120, 139.9, 108.8, 107.7]
+      joint_offset_deg: [55, 58, 79, 96,  55, 58, 79, 96,  55, 58, 79, 96,  100, 113, 40, 31]
       # Safety interlock: the ring path can only drive the trigger after the
       # direction table above has been checked on the robot. RViz preview of the
       # ring A/B/C/D candidates (slow, supervised) works without it.
