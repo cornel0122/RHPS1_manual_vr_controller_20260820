@@ -1,17 +1,18 @@
-# LEAP 右手 ring 抓取：现场操作单（2026-11-27）
+# LEAP 右手 ring 抓取：现场操作单（2026-11-27 版）
 
-**目标**：松开 trigger = ring 张开（拇指在食指平面向外张开、其余手指张开）；扣到底 = 握紧；
-中间平滑过渡：先食指包、再拇指合、最后其余手指收紧（仿真 `leap_grasp_physics_lab.py --strategy ring` 的顺序）。
+**目标**：松开 trigger = A（拇指转到食指平面向外张开、其余手指张开略弯），扣下按扳机数值平滑走 A → B（食指包）→ C（拇指合环）
+→ D（其余手指收紧），松开按原路退回。A/B/C/D 的角度和合拢顺序**和 MuJoCo 里看到的 ring 完全一样**，代码已有。
 
-**做法（快速版，约 30–40 分钟，其中示教两个姿势约 15–20 分钟）**：不去弄清每个电机的方向，直接在真手上**摆出“张开”和“握紧”两个姿势**，
-工具自动生成中间两帧。只改我们自己的 controller 配置，**不碰 LEAP 插件或任何硬件配置**。
+**现场要做的只有一件事**：确认“模型角度 → 真机命令”的对照表对不对。表按 11-24 的测试推算好了（配置里的 H1），
+**可能对也可能不对**。你只需要在 RViz 里点慢速预览、看真手、用大白话说哪里不对；对照表由 Claude 改，你重装再看。
+**不用拖任何关节滑条，不改 LEAP 插件或硬件配置。** 可能来回 2–3 轮，每轮约 10 分钟。
 
-**安全**：急停有人守；**不要开始 VIVE tracking**（开始后调试界面自动解除）；右手周围无物体（第 3 步再放瓶子）；
-`Slow apply duration` = 5 s；每次只改 1–2 个关节、每次 ≤15°；异常 → `HOLD NOW`，必要时急停。
+**安全**：急停有人守；**不要开始 VIVE tracking**（开始后调试界面自动解除）；右手周围无物体（第 2.6 步再放瓶子）；
+预览每段 5 s；异常 → `STOP SEQUENCE / HOLD NOW`，必要时急停。A 的拇指向外伸出较多，注意不要撞桌面。
 
 ---
 
-## 1. 安装最新 controller（Control PC，由用户执行）
+## 1. 安装（Control PC，由用户执行；每轮改表后重复）
 
 ```bash
 cd ~/workspace/mc-rtc-superbuild/extensions/rhps1_cornel_vive_controller
@@ -21,75 +22,67 @@ cd ~/workspace/build/ANAAvatarControllerRHPS1CornelVive_project
 ninja install
 ```
 按启动清单启动到 Start MC Control（LEAP：`RHPS1_leap_leap` + `ANAAvatarControllerRHPS1CornelVive_leap_manual`）。
+controller 终端会打印 `right trigger path: linear (ring preview only: direction table not verified)`，
+以及 `ring keyframe A clips R_THUMB_DIP ...`（预期：A/B 里拇指中节想向后弯 30°，真机做不到，变成伸直，无妨）。
 
-## 2. 示教“张开”姿势（RViz，10–15 分钟）
+## 2. RViz 慢速预览（每轮约 5 分钟）
 
-界面：`Avatar / LEAP Grasp Tuning / Right Hand`（各关节滑条在 `Finger 1`、`Thumb` 等子页面）。
+界面：`Avatar / LEAP Grasp Tuning / Right Hand`。
+1. `Slow apply duration [s]` = 5 → `ARM RIGHT HAND EDITOR`（`Armed = true`）。
+2. 子页面 `Ring Trigger Path`：`Ring status` 应为 `preview only: direction table not verified`。
+   点 `LOAD RING A/B/C/D INTO CANDIDATES (OVERWRITES SLOTS)`。
+3. 子页面 `ABCD Sequence`：四段时长都设 **5 s** → **空手**点 `START CURRENT -> A -> B -> C -> D`。
+4. 每一段对照下表看真手，**拍视频**最好：
 
-1. `Slow apply duration [s]` = 5 → `ARM RIGHT HAND EDITOR`（`Armed = true`）→ `CAPTURE ACTUAL INTO EDITOR`。
-   **省时间的起点**：子页面 `ABCD Sequence` → `LOAD BUILT-IN A/B/C/D FROM ACTUAL (OVERWRITES SLOTS)`。这四个是现在
-   整手线性 trigger 在 25/50/75/100% 的姿势，**在真手上本来就是对的**。张开用“松开 trigger 时的姿势”（当前实际）出发，
-   主要只调**拇指**（2–3 个滑条）；握紧从 `LOAD C`（75%）或 `LOAD D`（100%）出发，主要调拇指、必要时食指（2–4 个滑条）。
-   11-24：拇指关节顺序与模型一致、方向相反——滑条往一边拉，拇指往反方向动。
-   仿真里线性 trigger 抓不起瓶子是因为**手指同时向两侧岔开**。握紧时若真手手指岔开，把负责侧摆的滑条往回拉
-   （11-24 推测：真手侧摆由名为 `MCP_1`/`MCP_2`/`MCP_3` 的滑条驱动，根部两个关节对调了），让手指并拢再包住瓶子。
-2. 调 `target [deg]` → `APPLY EDITOR SLOWLY`，看**真手**，反复直到真手是 **ring 张开**：
-   拇指转到和食指同一平面并向外伸出，食指/中指/无名指张开、略弯（参考仿真 A 图）。
-   滑条对应的真机关节和模型名字不一定一样（11-24：四指根部两个关节对调、方向相反），**以真手为准**。
-3. 子页面 `Candidate A` → `SAVE EDITOR AS A`。16 个数会显示在 `Saved values [deg, slot order]`，
-   同时打印在 controller 终端（窗口 3）：`LEAP candidate A [deg, slot order ...]: [...]`。**拍照或复制这一行**。
+| 段 | 应该看到 | 常见错法 → 告诉 Claude 的话 |
+|---|---|---|
+| A | 食指/中指/无名指张开、略弯、**互相平行不岔开**；拇指转到和食指同一平面、向外伸出 | “手指向两边岔开” / “手指攥着没张开” / “拇指没转过来、贴着手掌” / “拇指往手背方向翻” |
+| B | 食指弯曲包向远侧；中指、无名指弯一半；拇指不动 | “食指没弯反而往旁边摆” / “食指是伸直的” / “中指无名指也全弯了” |
+| C | 拇指弯过来和食指合成环；其他不动 | “拇指往外翻而不是往里合” / “拇指合不到食指” |
+| D | 中指、无名指包上来，整体握紧 | “握不紧，手指还是半开” / “某根手指方向反了” |
 
-## 3. 示教“握紧”姿势（10–15 分钟）
+5. 不对 → `STOP SEQUENCE / HOLD NOW`，把看到的现象（哪一段、哪根手指、往哪边动）发给 Claude → Claude 改对照表并推送
+   → 回到第 1 步重装、再预览。对 → 继续。
+6. 把瓶子放到张开的手里（仿真位置：掌心前方、拇指与食指之间）再预览一次，看能否成环握住。→ `DISARM AND HOLD`。
 
-1. 把瓶子放到张开的手里（仿真的位置：瓶子在掌心前方、拇指与食指之间）。
-2. 逐步调 `target` → `APPLY EDITOR SLOWLY`，让真手**握住瓶子**：食指包住远侧、拇指合上与食指成环、其余手指贴上去。
-   在“刚好贴紧”之后再多弯 5–10°，扣到底时才有握力（触碰检测会让手指碰到物体后停下）。
-3. 子页面 `Candidate D` → `SAVE EDITOR AS D`，同样**拍照或复制那一行**。
-4. 慢慢退回张开（`LOAD A INTO EDITOR` → `APPLY EDITOR SLOWLY`），拿走瓶子 → `DISARM AND HOLD`。
+对照表的三类可调项（Claude 改，你不用管）：某根手指**岔开** → 侧摆槽位的偏移；某关节**方向反** → 该槽位的符号；
+整体**太开/太紧** → 该槽位的偏移。
 
-## 4. 生成配置（Operator PC，2 分钟）
+## 3. 解锁并用 trigger（10 分钟）
 
-```bash
-cd ~/luyisi/rhps1_cornel_vive_controller/operator_pc
-python3 tools/leap_ring_calibration.py from-poses \
-  --open   "[A 的 16 个数]" \
-  --closed "[D 的 16 个数]"
-```
-输出 A/B/C/D 四帧（B = 食指先合、C = 再加拇指、D = 全部握紧）和方向表（恒等）。显示 OK 就把输出交给 Claude
-写进 `controller/etc/ANAAvatarController.in.yaml` 的 `leap_ring` 并推送；然后按第 1 步重新安装
-（此时 `direction_verified` 仍为 false）。想换合拢顺序：`--stages thumb,index,others` 等。
-
-## 5. RViz 慢速预览（5–10 分钟，不需要 VIVE）
-
-1. `ARM RIGHT HAND EDITOR`；子页面 `Ring Trigger Path`：`Ring status` = `preview only: direction table not verified`。
-2. `LOAD RING A/B/C/D INTO CANDIDATES (OVERWRITES SLOTS)`；`ABCD Sequence` 四段都设 **5 s**。
-3. **空手** `START CURRENT -> A -> B -> C -> D`：A 张开 → B 食指合 → C 拇指合 → D 全握。
-4. 再把瓶子放进去重复一次。不对 → `STOP SEQUENCE / HOLD NOW`，回第 2/3 步重新示教。→ `DISARM AND HOLD`。
-   （RViz 模型的样子会和真手不一样：关键帧是按槽位直接示教的，只是显示问题，以真手为准。）
-
-## 6. 解锁并用 trigger（10 分钟）
-
-1. Claude 把 `direction_verified: true` 写进配置并推送 → 重新安装（第 1 步）。
-2. 启动到 Start MC Control，**先不开始 VIVE**；`Ring Trigger Path` 勾选 `Use ring path for the right trigger`，
+1. 预览全部正确 → Claude 把 `direction_verified: true` 写进配置并推送 → 重装（第 1 步）。
+2. 启动到 Start MC Control，**先不开始 VIVE**；`Ring Trigger Path` 页面勾选 `Use ring path for the right trigger`，
    确认 `Right trigger path = ring`。
 3. Operator PC：`./run_vive_talker_rhps1 --control-mode right`，右手 menu 开始。
-   **开始后手会以 ≤90°/s 移到张开姿势**（松开 trigger = A）。拇指伸出较多，注意碰撞。
+   **开始后手会以 ≤90°/s 移到 A 姿势**（松开 trigger = A）。
 4. 空手慢慢扣 trigger：`Current segment` 依次 A→B→C→D，松开回到 A。
 5. 抓瓶：**手先停稳，再扣 trigger**（仿真中边走边扣成功率低）。
 
 **回退**：暂停后取消勾选 `Use ring path...`，或配置改回 `leap_trigger_path: "linear"`（原来的整手线性 trigger）。
+**时间不够**：跳过本单，直接用线性 trigger（装新版后：松开张开、扣下握拳）戴 HMD 试抓。
 
 ---
 
-## 附录：逐关节标定（时间充裕、想原样复用仿真设计的 A/B/C/D 时）
+## 附录 A：对照表是怎么推算的（H1，2026-11-27）
 
-逐个滑条测：真手动的是哪个关节（`moved_joint`）、方向是否为模型“+”（`plus_is_model_plus` Y/N）、
-真手关节与模型 0 姿态一致时的命令值（`zero_cmd_deg`）：
+`controller/etc/ANAAvatarController.in.yaml` → `leap_ring`：槽位 i 的命令 = `joint_sign[i]` × 模型角度[`joint_map[i]`] + `joint_offset_deg[i]`，
+再被 mc_rtc 限制在该槽位关节的 URDF 范围内。依据 11-24 测试：① 四指根部“弯曲/侧摆”两个槽位对调；② 所有关节方向与模型相反；
+③ 命令 0 时手已弯曲、线性 trigger 能握拳 → “真机角度 = 槽位上限 − 命令”（张开在槽位上限）。于是弯曲类槽位的偏移 = 槽位上限
+（PIP 60、DIP 108、指尖 117、拇指 120/139.9/108.8/107.7），侧摆槽位偏移 0。最不确定的是侧摆零点（备选 55 或 128）和拇指。
+离线验证（MuJoCo 中加载 controller）：表能加载，只有拇指中节 A/B 被截断，状态 `preview only`，trigger 仍为 linear。
+
+## 附录 B：逐关节标定工具（想精确测量时）
 
 ```bash
-python3 tools/leap_ring_calibration.py template --prefill-1124 -o ~/leap_ring_sheet.csv   # 预填 11-24 推测
-python3 tools/leap_ring_calibration.py compute ~/leap_ring_sheet.csv
+cd ~/luyisi/rhps1_cornel_vive_controller/operator_pc
+python3 tools/leap_ring_calibration.py template --prefill-1124 -o ~/leap_ring_sheet.csv   # 已预填 H1
+python3 tools/leap_ring_calibration.py compute ~/leap_ring_sheet.csv                     # 输出对照表与截断检查
 ```
-输出 `joint_map / joint_sign / joint_offset_deg` 和换算后的 A/B/C/D；带 `*` 的值会被截断，先复查该槽位的零点。
-“模型 +”方向：`MCP_k` 根部弯曲；`PIP_k` 根部侧摆、远离拇指；`DIP_k`/`FINGERTIP_k` 弯曲；`THUMB_CMC` 转向手心；
-`THUMB_PIP` 绕自身轴转；`THUMB_DIP`/`THUMB_FINGERTIP` 弯曲。原理见 `docs/LEAP关节方向核对_测试步骤.md`。
+每个槽位记：真手动的是哪个关节（`moved_joint`）、方向是否为模型“+”（Y/N）、真手与模型 0 姿态一致时的命令值（`zero_cmd_deg`）。
+“模型 +”：`MCP_k` 根部弯曲；`PIP_k` 根部侧摆、远离拇指；`DIP_k`/`FINGERTIP_k` 弯曲；`THUMB_CMC` 转向手心；`THUMB_PIP` 绕自身轴转；
+`THUMB_DIP`/`THUMB_FINGERTIP` 弯曲。原理见 `docs/LEAP关节方向核对_测试步骤.md`。
+
+## 附录 C：直接示教（对照表怎么都调不对时的兜底）
+
+在 RViz 里把真手摆成“张开”存为 A、套瓶“握紧”存为 D（`SAVE EDITOR AS A/D`，16 个数会打印在 controller 终端），然后
+`python3 tools/leap_ring_calibration.py from-poses --open "[...]" --closed "[...]"` 生成 A/B/C/D（恒等对照表）。需要拖滑条，耗时。

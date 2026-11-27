@@ -66,6 +66,11 @@ RING = {
 
 # 2026-11-24 real-robot test + URDF check: on the four fingers MCP_k and PIP_k are swapped, all reversed.
 HYP_1124_MAP = [1, 0, 2, 3, 5, 4, 6, 7, 9, 8, 10, 11, 12, 13, 14, 15]
+# "H1" offsets (2026-11-27, in the controller config): real angle = slot upper limit - command for the
+# flexion-driving slots (the hand is bent at command 0 and the linear trigger reaches a fist); abduction
+# slots (model abduction is always 0) at 0.
+HYP_H1_ZERO = {"MCP": 0, "PIP": 60, "DIP": 108, "FINGERTIP": 117,
+               "THUMB_CMC": 120, "THUMB_PIP": 139.9, "THUMB_DIP": 108.8, "THUMB_FINGERTIP": 107.7}
 FIELDS = ["slot", "moved_joint", "plus_is_model_plus", "zero_cmd_deg", "plus_meaning_of_moved_joint", "note"]
 
 
@@ -85,9 +90,9 @@ def cmd_template(args):
             "slot": slot,
             "moved_joint": moved,
             "plus_is_model_plus": "N" if args.prefill_1124 else "",
-            "zero_cmd_deg": "",
+            "zero_cmd_deg": HYP_H1_ZERO[kind(slot)] if args.prefill_1124 else "",
             "plus_meaning_of_moved_joint": PLUS_MEANING[kind(moved)] if moved else "",
-            "note": "11-24 hypothesis: check" if args.prefill_1124 else "",
+            "note": "11-24 + H1 hypothesis: check" if args.prefill_1124 else "",
         })
     out = open(args.output, "w", newline="", encoding="utf-8") if args.output else sys.stdout
     writer = csv.DictWriter(out, fieldnames=FIELDS)
