@@ -1230,7 +1230,11 @@ states:
       # too open/closed -> that slot's offset (base flexion up to ~12 deg off because of the missing scale).
       joint_map: [1, 0, 2, 3,  5, 4, 6, 7,  9, 8, 10, 11,  12, 13, 14, 15]
       joint_sign: [-1, -1, -1, -1,  -1, -1, -1, -1,  -1, -1, -1, -1,  -1, -1, -1, -1]
-      joint_offset_deg: [55, 58, 79, 96,  55, 58, 79, 96,  55, 58, 79, 96,  100, 113, 40, 31]
+      # Round 3 (H3, after the round-2 preview): index slightly towards the middle finger -> MCP_1 55 -> 70
+      # (11-24: MCP_1 + moves the index away from the middle finger); thumb too close to the index base and
+      # jittering (pressing the palm) -> THUMB_CMC 100 -> 110 (round 1 at 120 was straight out, round 2 at 100
+      # too far in); thumb still "thumbs-up" -> THUMB_DIP 40 -> 20, THUMB_FINGERTIP 31 -> 10 (lower = more flexed).
+      joint_offset_deg: [70, 58, 79, 96,  55, 58, 79, 96,  55, 58, 79, 96,  110, 113, 20, 10]
       # Safety interlock: the ring path can only drive the trigger after the
       # direction table above has been checked on the robot. RViz preview of the
       # ring A/B/C/D candidates (slow, supervised) works without it.
